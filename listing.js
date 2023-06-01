@@ -1,11 +1,13 @@
+var archives = [];
 var tree = {};
+const days = [ 'Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag' ];
 
 fetch ('archives.json',
        { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }}
 )
 .then (res => res.json())
 .then (json => {
-    archives = json;
+    archives = parse_archives (json);
     return fetch ('data.json',
        { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }});
 })
@@ -17,6 +19,34 @@ fetch ('archives.json',
 
 function escapeHtml(x) {
     return x .replaceAll ('&', '&amp;') .replaceAll ('<', '&lt;') .replaceAll ('>', '&gt;');
+}
+
+function parse_archives (ar) {
+    var res = [];
+    for (const e of ar) {
+        var entry = { name: e };
+        if (e != null) {
+            const d = new Date (e.replace (/^(....-..-..)-(..)(..)(..)$/, '$1T$2:$3:$4.000Z'));
+            if (isNaN (d)) {
+                console.log ('Invalid date: '+e);
+            }
+            entry.time = d.getTime();
+            entry.descr = 'Backup performed on '+d.toLocaleDateString();
+            // Parse all times *before* 6am as day before - that's the way people tick
+            const t = entry.time - 6*60*60*1000;
+            const dd = new Date (t);
+            const now = Date.now();
+            if (now - t < 6*24*60*60*1000) {
+                entry.short = days [dd.getDay()];
+            } else if (now - t < 10*30*24*60*60*1000) {
+                entry.short = dd.getDate()+'.'+(dd.getMonth()+1)+'.';
+            } else {
+                entry.short = dd.getDate()+'.'+(dd.getMonth()+1)+'.'+dd.getFullYear();
+            }
+        }
+        res.push (entry);
+    }
+    return res;
 }
 
 var global_id=1;
@@ -46,7 +76,24 @@ function update_list (root, tree) {
         if (t.l !== undefined) {
             html += " &rarr; " + escapeHtml (t.l);
         }
-        html += ' - ' + escapeHtml (JSON.stringify (t.a));
+        var ar = [];
+        var last = 1e30, count = 0;
+        for (const a of [...t.a, 1e30]) {
+            if (a == last+1) {
+                last = a;
+                count++;
+            } else {
+                if (count === 1) {
+                    ar.push (archives[last].short);
+                } else if (count > 1) {
+                    ar.push (archives[last].short+'('+count+')');
+                }
+                last = Math.abs(a);
+                count = 1;
+            }
+        }
+
+        html += ' - ' + escapeHtml (ar.join(' '));
         html += '<div></div></li>';
     }
     html += '</ul>';
