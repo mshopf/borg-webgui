@@ -1,0 +1,38 @@
+<html><head>
+    <title>Borg Backup Restore</title>
+    <style>
+    ul { list-style-type: none; padding-left: 0;}
+    li {
+        list-style-type: none;
+        padding-left: 20px;
+        margin-left: 2px;
+        background-repeat:no-repeat;
+        background-position:left top;
+    }
+    li.sel,li.allsel {
+        background-image:url('check.png');
+    }
+    li.dir {
+        background-image:url('tri_rw.png');
+    }
+    li.open {
+        background-image:url('tri_dw.png');
+    }
+    li.dir.sel {
+        background-image:url('tri_rg.png');
+    }
+    li.dir.sel.open {
+        background-image:url('tri_dg.png');
+    }
+    li.dir.allsel {
+        background-image:url('tri_rb.png');
+    }
+    li.dir.allsel.open {
+        background-image:url('tri_db.png');
+    }
+    </style>
+</head><body>
+    <h3>Backup of %</h3>
+    <div id=root></div>
+    <script src=listing.js></script>
+    </body></html>
