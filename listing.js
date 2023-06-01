@@ -76,24 +76,13 @@ function update_list (root, tree) {
         if (t.l !== undefined) {
             html += " &rarr; " + escapeHtml (t.l);
         }
-        var ar = [];
-        var last = 1e30, count = 0;
-        for (const a of [...t.a, 1e30]) {
-            if (a == last+1) {
-                last = a;
-                count++;
-            } else {
-                if (count === 1) {
-                    ar.push (archives[last].short);
-                } else if (count > 1) {
-                    ar.push (archives[last].short+'('+count+')');
-                }
-                last = Math.abs(a);
-                count = 1;
-            }
-        }
 
-        html += ' - ' + escapeHtml (ar.join(' '));
+        const ar = generate_datedescr (t.a);
+        if (ar.length > 5) {
+            ar .splice (5);
+            ar .push ('...');
+        }
+        html += ' &nbsp; <span class=dates>' + ar.join(' ') + '</span>';
         html += '<div></div></li>';
     }
     html += '</ul>';
@@ -105,6 +94,32 @@ function update_list (root, tree) {
             update_list (elem .querySelector ('div'), refs[id]);
         }
     }
+}
+
+function generate_datedescr (array) {
+    var ar = [];
+    var last = 0, count = 0, long = '';
+    for (const a of [...array, 1e30]) {
+        if (a == last+1) {
+            last = a;
+            long += '\n' + archives[a].descr;
+            count++;
+        } else {
+            if (count > 0) {
+                var str = archives[last].short;
+                if (count > 1) {
+                    str += '('+count+')';
+                }
+                ar.push (`<span title="${escapeHtml(long)}">${str}</span>`);
+            }
+            if (a < 1e29) {
+                last = Math.abs(a);
+                long = archives[last].descr;
+                count = 1;
+            }
+        }
+    }
+    return ar;
 }
 
 function get_disclosure_classes (t) {
