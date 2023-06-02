@@ -53,21 +53,31 @@ var global_id=1;
 var refs = {};
 function update_list (root, tree) {
     var html = '<ul>';
-    var evts = [];
+    var dirs = [];
+    var entries = [];
     for (const e in tree.c) {
         const t = tree.c[e];
+        if (t.i === undefined) {
+            t.i = global_id++;
+            refs[t.i] = t;
+        }
+        html += `<li id=${t.i}`;
         if (t.c != null) {
-            if (t.i === undefined) {
-                t.i = global_id++;
-                refs[t.i] = t;
-            }
+            html += ` class="${get_disclosure_classes(t)}"`;
+            dirs.push (t.i);
         }
-        if (t.i != undefined) {
-            html += `<li id=${t.i} class="${get_disclosure_classes(t)}">`;
-            evts.push (t.i);
-        } else {
-            html += '<li>';
+
+        const ar = generate_datedescr (t.a);
+        if (ar.length > 5) {
+            ar .splice (5);
+            ar .push ('...');
         }
+        if (ar.length < 1) {
+            ar .push ('(empty)');
+        }
+        html += `><div class="${get_selection_classes(t.y)}">${ar.join(' ')}</div>`;
+        entries.push (t.i);
+
         if (e.startsWith ('/')) {
             html += escapeHtml (e.slice(1));
         } else {
@@ -77,22 +87,20 @@ function update_list (root, tree) {
             html += " &rarr; " + escapeHtml (t.l);
         }
 
-        const ar = generate_datedescr (t.a);
-        if (ar.length > 5) {
-            ar .splice (5);
-            ar .push ('...');
-        }
-        html += ' &nbsp; <span class=dates>' + ar.join(' ') + '</span>';
-        html += '<div></div></li>';
+        html += '<div class=sub></div></li>';
     }
     html += '</ul>';
     root.innerHTML = html;
-    for (const id of evts) {
+    for (const id of dirs) {
         const elem = document.getElementById (id);
         elem .addEventListener ('click', toggle_dir);
         if (refs[id].o) {
-            update_list (elem .querySelector ('div'), refs[id]);
+            update_list (elem .querySelector ('.sub'), refs[id]);
         }
+    }
+    for (const id of entries) {
+        const elem = document.getElementById (id);
+        elem .querySelector ('.entry') .addEventListener ('click', toggle_entry);
     }
 }
 
@@ -124,9 +132,14 @@ function generate_datedescr (array) {
 
 function get_disclosure_classes (t) {
     const dir      = (t.c !== undefined ? 'dir ' : '');
-    const selected = (t.y !== undefined ? (t.y === true ? 'allsel ' : 'sel ') : '');
+    //const selected = (t.y !== undefined ? (t.y === true ? 'allsel ' : 'sel ') : '');
     const open     = (t.o ? 'open' : '');
-    return dir+selected+open;
+    return dir+open;
+}
+
+function get_selection_classes (y) {
+    const selected = (y !== undefined ? (y === true ? ' selected' : ' partial') : '');
+    return 'entry'+selected;
 }
 
 function toggle_dir (evt) {
@@ -136,12 +149,69 @@ function toggle_dir (evt) {
     if (! t.o) {
         t.o = true;
         elem .className = get_disclosure_classes (t);
-        update_list (elem .querySelector ('div'), t);
+        update_list (elem .querySelector ('.sub'), t);
     } else {
         t.o = false;
         elem .className = get_disclosure_classes (t);
-        elem .querySelector ('div') .innerHTML = '';
+        elem .querySelector ('.sub') .innerHTML = '';
     }
+}
+
+function set_selection_up (t, y) {
+    t.y = y;
+    // TODO: no way w/o DOM to get parent entry
+    const elem = document.getElementById (t.i) .querySelector ('.entry');
+    elem .className = get_selection_classes (t.y);
+    var count = 0, selected = false;
+    const list = elem.parentNode.parentNode.children;
+    for (const e of list) {
+        const y = refs [e.id] .y;
+        if (y === false) {
+            count = -1;
+            break;
+        } else if (y === true) {
+            count += 2;
+        }
+    }
+    if (count === list.length * 2) {
+        selected = true;
+    } else if (count === 0) {
+        selected = undefined;
+    }
+    if (elem.parentNode.parentNode.parentNode.parentNode.id > 0) {
+        set_selection_up (refs[elem.parentNode.parentNode.parentNode.parentNode.id], selected);
+    }
+}
+
+function set_selection_down (tree, y) {
+    if (y === false) {
+        return;
+    }
+    tree.y = y;
+    if (tree.i !== undefined) {
+        const elem = document.getElementById (tree.i);
+        if (elem) {
+            elem .querySelector ('.entry') .className = get_selection_classes (y);
+        }
+    }
+    if (tree.c !== undefined) {
+        for (const e in tree.c) {
+            set_selection_down (tree.c[e], y);
+        }
+    }
+}
+
+function toggle_entry (evt) {
+    evt.stopPropagation();
+    const id = this.parentNode.id;
+    const t = refs[id];
+    if (t.y === undefined) {
+        t.y = true;
+    } else {
+        t.y = undefined;
+    }
+    set_selection_up   (t, t.y);
+    set_selection_down (t, t.y);
 }
 
 // Data structure:
