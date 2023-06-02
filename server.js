@@ -14,8 +14,31 @@ app.use (express.static (path.join (__dirname, 'public')));
 app.get ('/archives.json', function (req, res) {
     res.json (archives);
 });
-app.get ('/data.json', function (req, res) {
-    res.json (tree);
+
+app.get ('/data/:path(*)', function (req, res) {
+    var t = tree;
+    if (req.params.path !== '') {
+        const elems = req.params.path.split ('/');
+        for (const e of elems) {
+            t = t.c['/'+e];
+            if (t === undefined || t.c === undefined) {
+                res .status (404) .send (null);
+                return;
+            }
+        }
+    }
+    const copy = Object.assign ({}, t);
+    copy.c = Object.assign ({}, copy.c);
+    for (const i in copy.c) {
+        copy.c[i] = Object.assign ({}, copy.c[i]);
+        if (copy.c[i].c !== undefined) {
+            copy.c[i].c = null;
+        }
+    }
+
+    //console.log (req.params.path + " - " + JSON.stringify (copy));
+    console.log (req.params.path);
+    res.json (copy);
 });
 
 app.listen(8080);

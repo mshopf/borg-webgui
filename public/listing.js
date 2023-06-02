@@ -2,18 +2,17 @@ var archives = [];
 var tree = {};
 const days = [ 'Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag' ];
 
-fetch ('archives.json',
-       { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }}
-)
+fetch ('archives.json', { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }})
 .then (res => res.json())
 .then (json => {
     archives = parse_archives (json);
-    return fetch ('data.json',
-       { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }});
+//    return fetch ('data.json', { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }});
+    return fetch ('/data/', { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }});
 })
 .then (res => res.json())
 .then (json => {
     tree = json;
+    refs[0] = tree;
     update_list (document.getElementById ('root'), tree);
 });
 
@@ -50,11 +49,36 @@ function parse_archives (ar) {
 }
 
 var global_id=1;
-var refs = {};
-function update_list (root, tree) {
+var refs = [];
+async function update_list (root, tree) {
     var html = '<ul>';
     var dirs = [];
     var entries = [];
+    if (tree.c === null) {
+        // TODO: no way w/o DOM to get parent entry
+        var path = '';
+        var elem = root.parentNode;
+        console.log (elem.id + ' = ' + tree.i);
+        while (elem.id != 0) {
+            const test = elem.id;
+            elem = elem.parentNode.parentNode.parentNode;
+            console.log (elem.id);
+            const t = refs[elem.id];
+            for (const e in t.c) {
+                if (t.c[e].i == test) {
+                    path = e + path;
+                    break;
+                }
+            }
+        }
+        const response = await fetch ('/data'+path, { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }});
+        tree.c = (await response .json ()) .c;
+        if (tree.y === true) {
+            for (const e in tree.c) {
+                tree.c[e].y = true;
+            }
+        }
+    }
     for (const e in tree.c) {
         const t = tree.c[e];
         if (t.i === undefined) {
@@ -62,7 +86,7 @@ function update_list (root, tree) {
             refs[t.i] = t;
         }
         html += `<li id=${t.i}`;
-        if (t.c != null) {
+        if (t.c !== undefined) {
             html += ` class="${get_disclosure_classes(t)}"`;
             dirs.push (t.i);
         }
@@ -95,7 +119,7 @@ function update_list (root, tree) {
         const elem = document.getElementById (id);
         elem .addEventListener ('click', toggle_dir);
         if (refs[id].o) {
-            update_list (elem .querySelector ('.sub'), refs[id]);
+            await update_list (elem .querySelector ('.sub'), refs[id]);
         }
     }
     for (const id of entries) {
@@ -142,14 +166,14 @@ function get_selection_classes (y) {
     return 'entry'+selected;
 }
 
-function toggle_dir (evt) {
+async function toggle_dir (evt) {
     evt.stopPropagation();
     const t = refs[this.id];
     const elem = document.getElementById (this.id);
     if (! t.o) {
         t.o = true;
         elem .className = get_disclosure_classes (t);
-        update_list (elem .querySelector ('.sub'), t);
+        await update_list (elem .querySelector ('.sub'), t);
     } else {
         t.o = false;
         elem .className = get_disclosure_classes (t);
@@ -194,7 +218,7 @@ function set_selection_down (tree, y) {
             elem .querySelector ('.entry') .className = get_selection_classes (y);
         }
     }
-    if (tree.c !== undefined) {
+    if (tree.c != undefined) {  // || null
         for (const e in tree.c) {
             set_selection_down (tree.c[e], y);
         }
