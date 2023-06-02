@@ -58,11 +58,9 @@ async function update_list (root, tree) {
         // TODO: no way w/o DOM to get parent entry
         var path = '';
         var elem = root.parentNode;
-        console.log (elem.id + ' = ' + tree.i);
         while (elem.id != 0) {
             const test = elem.id;
             elem = elem.parentNode.parentNode.parentNode;
-            console.log (elem.id);
             const t = refs[elem.id];
             for (const e in t.c) {
                 if (t.c[e].i == test) {
@@ -79,7 +77,8 @@ async function update_list (root, tree) {
             }
         }
     }
-    for (const e in tree.c) {
+    const props = Object.keys (tree.c) .sort ((a,b) => (a[0]=='/'?a.slice(1):a).localeCompare (b[0]=='/'?b.slice(1):b) );
+    for (const e of props) {
         const t = tree.c[e];
         if (t.i === undefined) {
             t.i = global_id++;
