@@ -10,18 +10,24 @@
         padding: 0;
     }
     li {
+        list-style-type: none;
+        margin: 0 5px 0 2px;
+        padding-left: 20px;
+    }
+    .path {
+        padding-left: 20px;
         overflow: hidden;
         white-space: nowrap;
-        list-style-type: none;
-        padding-left: 20px;
-        margin: 0 5px 0 2px;
         background-repeat:no-repeat;
         background-position:left top;
     }
-    li.dir {
+    .path:hover {
+        background-color: #e0e0e0;
+    }
+    .path.dir {
         background-image:url('tri_r.png');
     }
-    li.open {
+    .path.open {
         background-image:url('tri_d.png');
     }
     .entry {
@@ -47,6 +53,6 @@
 </head><body>
     <h3>Backup of %</h3>
     <!-- root level entry div to have the system some (hidden) entry to find and change -->
-    <div id=0><div class=entry></div><div class=sub id=root></div></div>
+    <div id=0><div class=entry></div><div class=path></div><div class=sub id=root></div></div>
     <script src=listing.js></script>
     </body></html>

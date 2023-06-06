@@ -84,11 +84,7 @@ async function update_list (root, tree) {
             t.i = global_id++;
             refs[t.i] = t;
         }
-        html += `<li id=${t.i}`;
-        if (t.c !== undefined) {
-            html += ` class="${get_disclosure_classes(t)}"`;
-            dirs.push (t.i);
-        }
+        html += `<li id=${t.i}>`;
 
         const ar = generate_datedescr (t.a);
         if (ar.length > 5) {
@@ -98,8 +94,15 @@ async function update_list (root, tree) {
         if (ar.length < 1) {
             ar .push ('(empty)');
         }
-        html += `><div class="${get_selection_classes(t.y)}">${ar.join(' ')}</div>`;
+        html += `<div class="${get_selection_classes(t.y)}">${ar.join(' ')}</div><div class="`;
+        if (t.c !== undefined) {
+            html += get_disclosure_classes(t);
+            dirs.push (t.i);
+        } else {
+            html += 'path';
+        }
         entries.push (t.i);
+        html += '">';
 
         if (e.startsWith ('/')) {
             html += escapeHtml (e.slice(1));
@@ -110,7 +113,7 @@ async function update_list (root, tree) {
             html += " &rarr; " + escapeHtml (t.l);
         }
 
-        html += '<div class=sub></div></li>';
+        html += '</div><div class=sub></div></li>';
     }
     html += '</ul>';
     root.innerHTML = html;
@@ -154,10 +157,9 @@ function generate_datedescr (array) {
 }
 
 function get_disclosure_classes (t) {
-    const dir      = (t.c !== undefined ? 'dir ' : '');
-    //const selected = (t.y !== undefined ? (t.y === true ? 'allsel ' : 'sel ') : '');
-    const open     = (t.o ? 'open' : '');
-    return dir+open;
+    const dir      = (t.c !== undefined ? ' dir' : '');
+    const open     = (t.o ? ' open' : '');
+    return 'path'+dir+open;
 }
 
 function get_selection_classes (y) {
@@ -168,16 +170,14 @@ function get_selection_classes (y) {
 async function toggle_dir (evt) {
     evt.stopPropagation();
     const t = refs[this.id];
-    const elem = document.getElementById (this.id);
     if (! t.o) {
         t.o = true;
-        elem .className = get_disclosure_classes (t);
-        await update_list (elem .querySelector ('.sub'), t);
+        await update_list (this .querySelector ('.sub'), t);
     } else {
         t.o = false;
-        elem .className = get_disclosure_classes (t);
-        elem .querySelector ('.sub') .innerHTML = '';
+        this .querySelector ('.sub') .innerHTML = '';
     }
+    this .querySelector ('.path') .className = get_disclosure_classes (t);
 }
 
 function set_selection_up (t, y) {
