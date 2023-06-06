@@ -1,8 +1,12 @@
+// Usage: node ./tree.js -<path> <path> [...]
+//        Removes entries ('-'), adds entries
+//
 // borg list --format "{type} {path} {size} {isomtime}" --json-lines /data/backup/zuse2/borg::zuse2-%-2023-05-28-023001 | bzip2 >zuse2-%-2023-05-28-023001.bz2
 
-const fs = require('fs');
-const bz2 = require('unbzip2-stream');
-const readline = require('readline');
+const fs  = require ('fs');
+const node_stream = require('stream');
+const bz2 = require ('unbzip2-stream');
+const readline = require ('readline');
 
 // walk tree structure
 function walk_tree (tree, path, level=0) {
@@ -62,6 +66,38 @@ function consolidate_dirs (tree) {
     return ar;
 }
 
+// recursivelly remove an archive
+function remove_archive (tree, nr) {
+    for (const i in tree.a) {
+        if (tree.a[i] === nr) {
+            tree.a.splice (i, 1);
+            for (var j = i; j < tree.a.length; j++) {
+                tree.a[j] = Math.sign (tree.a[j]) * (Math.abs (tree.a[j]) - 1);
+            }
+            break;
+        } else if (tree.a[i] === -nr) {
+            tree.a.splice (i, 1);
+            for (var j = i; j < tree.a.length; j++) {
+                tree.a[j] = Math.sign (tree.a[j]) * (Math.abs (tree.a[j]) - 1);
+            }
+            if (i < tree.a.length && tree.a[i] > 0) {
+                tree.a[i] = -tree.a[i];
+            }
+            break;
+        } else if (Math.abs (tree.a[i]) > nr) {
+            for (var j = i; j < tree.a.length; j++) {
+                tree.a[j] = Math.sign (tree.a[j]) * (Math.abs (tree.a[j]) - 1);
+            }
+            break;
+        }
+    }
+    if (tree.c !== undefined) {
+        for (const e in tree.c) {
+            remove_archive (tree.c[e], nr);
+        }
+    }
+}
+
 
 // create a node
 function add_node (tree, entry, archive, s, t, l) {
@@ -78,22 +114,13 @@ function add_node (tree, entry, archive, s, t, l) {
     if (last_a === -archive) {
         return;
     }
-    if (entry === "nsswitch.conf") {
-        console.error (`${archive}: ns ${ns} s ${s} nt ${nt} t ${t} nl ${nl} l ${l} - ${JSON.stringify(a)}`);
-    }
     if (ns !== s || nt !== t || nl !== l) {
-        if (entry === "nsswitch.conf") {
-            console.error ('  new');
-        }
         if (last_a === archive) {
             a[a.length-1] = -archive;
         } else {
             a.push (-archive);
         }
     } else {
-        if (entry === "nsswitch.conf") {
-            console.error ('  same');
-        }
         if (last_a !== archive) {
             a.push (archive);
         }
@@ -122,9 +149,9 @@ function find_tree (tree, path, archive) {
 }
 
 
-
 async function read_tree (file, archive) {
 
+//        if (files[i].match (/\.json
     var stream = fs.createReadStream (file);
     if (file.slice (-4) === ".bz2") {
         stream = stream.pipe (bz2());
@@ -170,14 +197,46 @@ async function read_tree (file, archive) {
     return tree;
 }
 
-var archives = []
-var tree = { a:[], c:{} };
-var last_path = "";
-var last_tree = tree;
+var archives, tree, last_tree, last_path;
+
+function streamToString (stream) {
+    const chunks = [];
+    return new Promise((resolve, reject) => {
+        stream.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+        stream.on('error', (err) => reject(err));
+        stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    })
+}
 
 async function main () {
 
-    const [,, ...files] = process.argv;
+    const [,, datafile, ...files] = process.argv;
+
+    if (datafile == null || datafile === '') {
+        console.error ('Usage: cmd datafile.json[.bz2]|- [-remove_archive] [add_archive] [...]');
+        return;
+    }
+    if (datafile === '-') {
+        console.error ('fresh start, creating new backup-data');
+        archives = [ null ];
+        tree = { a:[], c:{} };
+        last_tree = tree;
+        last_path = '';
+    } else {
+        console.error ('Reading original data '+datafile);
+        try {
+            var stream = fs.createReadStream (datafile);
+            if (datafile.slice (-4) === ".bz2") {
+                stream = stream.pipe (bz2());
+            }
+            var data = await streamToString (stream);
+            [ archives, tree ] = JSON.parse (data);
+            last_tree = tree;
+            last_path = '';
+        } catch (e) {
+            console.error ('Reading data: '+e.message);
+        }
+    }
 
 // Data structure:
 // Object: a "Archives" - Array of archive names TBC
@@ -190,12 +249,38 @@ async function main () {
 
     for (const i in files) {
         console.error (files[i]);
-        await read_tree (files[i], +i+1);
+        const name = files[i].match (/^([-+])((.*)-(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
+        if (name == null || name[1] == null) {
+            console.error ("* does not match pattern");
+            continue;
+        }
+        if (name[1] == '-') {
+            // remove archive
+            var nr;
+            for (nr = 1; nr < archives.length; nr++) {
+                if (name[4] === archives[nr]) {
+                    break;
+                }
+            }
+            if (nr >= archives.length) {
+                console.error ('* not part of archives: '+name[4]);
+                continue;
+            }
+            console.error ("removing archive "+nr);
+            remove_archive (tree, nr);
+            archives.splice (nr, 1);
+            continue;
+        }
+        else if (name[1] == '+') {
+            // add archive
+            await read_tree (name[2], archives.length);
+            archives.push (name[4]);
+        }
     }
 
     consolidate_dirs (tree);
     //walk_tree (tree, "");
-    console.log (JSON.stringify (tree));
+    console.log (JSON.stringify ([archives, tree]));
 };
 
 main();
