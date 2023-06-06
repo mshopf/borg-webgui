@@ -69,28 +69,44 @@ function consolidate_dirs (tree) {
 // recursivelly remove an archive
 function remove_archive (tree, nr) {
     for (const i in tree.a) {
+        // Logic:
+        // Find first entry with |nr| or higher
+        // Action depends on situation:
         if (tree.a[i] === nr) {
+            // Found +nr -> remove and move follwing numbers up
             tree.a.splice (i, 1);
             for (var j = i; j < tree.a.length; j++) {
                 tree.a[j] = Math.sign (tree.a[j]) * (Math.abs (tree.a[j]) - 1);
             }
             break;
         } else if (tree.a[i] === -nr) {
+            // Found -nr -> remove and move follwing numbers up
+            // If the following archive number is positive,
+            // it has to be negated to conclude that following archive
+            // is the first with new content
+            // If there is no update of dates (s/t/l), i.e. no
+            // numbers beyond this entry, nuke s/t/l
             tree.a.splice (i, 1);
             for (var j = i; j < tree.a.length; j++) {
                 tree.a[j] = Math.sign (tree.a[j]) * (Math.abs (tree.a[j]) - 1);
             }
-            if (i < tree.a.length && tree.a[i] > 0) {
-                tree.a[i] = -tree.a[i];
+            if (i < tree.a.length) {
+                if (tree.a[i] > 0) {
+                    tree.a[i] = -tree.a[i];
+                }
+            } else {
+                tree.s = tree.t = tree.l = undefined;
             }
             break;
         } else if (Math.abs (tree.a[i]) > nr) {
+            // Found a higher number -> move follwing numbers up
             for (var j = i; j < tree.a.length; j++) {
                 tree.a[j] = Math.sign (tree.a[j]) * (Math.abs (tree.a[j]) - 1);
             }
             break;
         }
     }
+    // recurse
     if (tree.c !== undefined) {
         for (const e in tree.c) {
             remove_archive (tree.c[e], nr);
@@ -213,7 +229,8 @@ async function main () {
     const [,, datafile, ...files] = process.argv;
 
     if (datafile == null || datafile === '') {
-        console.error ('Usage: cmd datafile.json[.bz2]|- [-remove_archive] [add_archive] [...]');
+        console.error ('Usage: cmd datafile.json[.bz2]|- [/regex] (reads in borg list and determines added/removed archives)');
+        console.error ('Usage: cmd datafile.json[.bz2]|- [[-|+]archive] [...]');
         return;
     }
     if (datafile === '-') {
@@ -235,6 +252,7 @@ async function main () {
             last_path = '';
         } catch (e) {
             console.error ('Reading data: '+e.message);
+            return;
         }
     }
 
@@ -249,10 +267,10 @@ async function main () {
 
     for (const i in files) {
         console.error (files[i]);
-        const name = files[i].match (/^([-+])((.*)-(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
+        const name = files[i].match (/^([-+])((.*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
         if (name == null || name[1] == null) {
-            console.error ("* does not match pattern");
-            continue;
+            console.error ("* does not match parameter pattern");
+            return;
         }
         if (name[1] == '-') {
             // remove archive
