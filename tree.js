@@ -1,12 +1,9 @@
-// Usage: node ./tree.js -<path> <path> [...]
-//        Removes entries ('-'), adds entries
-//
-// borg list --format "{type} {path} {size} {isomtime}" --json-lines /data/backup/zuse2/borg::zuse2-%-2023-05-28-023001 | bzip2 >zuse2-%-2023-05-28-023001.bz2
-
 const fs  = require ('fs');
 const node_stream = require('stream');
 const bz2 = require ('unbzip2-stream');
 const readline = require ('readline');
+const cp = require ('child_process');
+
 
 // walk tree structure
 function walk_tree (tree, path, level=0) {
@@ -167,10 +164,15 @@ function find_tree (tree, path, archive) {
 
 async function read_tree (file, archive) {
 
-//        if (files[i].match (/\.json
-    var stream = fs.createReadStream (file);
-    if (file.slice (-4) === ".bz2") {
-        stream = stream.pipe (bz2());
+    var stream, child;
+    if (file.match (/(\.json|\.bz2)$/)) {
+        stream = fs.createReadStream (file);
+        if (file.slice (-4) === ".bz2") {
+            stream = stream.pipe (bz2());
+        }
+    } else {
+        const child = cp.spawn ('borg', ['list', '--format', '"{type} {path} {size} {isomtime}"', '--json-lines', '::'+file]);
+        stream = child.stdout;
     }
 
     const rl = readline.createInterface ({
@@ -210,6 +212,20 @@ async function read_tree (file, archive) {
     }
 
     console.error ("Memory Usage: "+ process.memoryUsage().heapUsed/(1024*1024) + " MB");
+
+    if (child !== undefined) {
+        var error = "";
+        for await (const chunk of child.stderr) {
+            error += chunk;
+        }
+        const exitCode = await new Promise ( (resolve, reject) => {
+            child.on ('close', resolve);
+        });
+        if (exitCode) {
+            throw new Error( `subprocess error exit ${exitCode}, ${error}`);
+        }
+    }
+
     return tree;
 }
 
@@ -223,6 +239,11 @@ function streamToString (stream) {
         stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     })
 }
+async function call_command (bin, args) {
+    const child = cp.spawn (bin, args);
+    return streamToString (child.stdout);
+}
+
 
 async function main () {
 
@@ -256,43 +277,64 @@ async function main () {
         }
     }
 
-// Data structure:
-// Object: a "Archives" - Array of archive names TBC
-//         c "Children" - keys are dir/file names
-//         s "Size"  t "mTime"  l "link" of last added archive
-//         c available on dirs, s and t on files, l on links
-    //{"type": "d", "mode": "drwxr-xr-x", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig", "healthy": true, "source": "", "linktarget": "", "flags": 0, "isomtime": "2022-01-24T16:33:10.461280", "size": 0}
-    //{"type": "-", "mode": "-rw-r--r--", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig/64bit_strstr_via_64bit_strstr_sse2_unaligned", "healthy": true, "source": "", "linktarget": "", "flags": 0, "isomtime": "2021-11-15T19:29:28.000000", "size": 0}
-    //{"type": "l", "mode": "lrwxrwxrwx", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig/grub", "healthy": true, "source": "../default/grub", "linktarget": "../default/grub", "flags": 0, "isomtime": "2022-01-12T16:23:39.000000", "size": 15}
-
-    for (const i in files) {
-        console.error (files[i]);
-        const name = files[i].match (/^([-+])((.*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
-        if (name == null || name[1] == null) {
-            console.error ("* does not match parameter pattern");
-            return;
-        }
-        if (name[1] == '-') {
-            // remove archive
-            var nr;
-            for (nr = 1; nr < archives.length; nr++) {
-                if (name[4] === archives[nr]) {
-                    break;
-                }
+    if (files[0][0] === '/' && files.length === 1) {
+        console.error ('reading borg archive list');
+        const filter = new RegExp (files[0].slice(1));
+        const json = JSON.parse (await call_command ('borg', ['list', '--json']));
+        const obj_archives = { };
+        for (const e of json.archives) {
+            const name = e.name.match (/^((.*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
+            if (name [1] .match (filter)) {
+                obj_archives[name[3]] = e.name;
             }
-            if (nr >= archives.length) {
-                console.error ('* not part of archives: '+name[4]);
+        }
+        // walk backwards (removing an archive shifts everything after it back)
+        // archives[0] is always null
+        for (var nr = archives.length-1; nr > 0; nr--) {
+            var name = archives[nr];
+            if (obj_archives [name] === undefined) {
+                console.error ('purging archive '+name);
+                remove_archive (tree, nr);
+                archives.splice (nr, 1);
+            }
+            delete obj_archives[name];
+        }
+        for (const e of Object.keys (obj_archives) .sort()) {
+            console.error ('adding archive '+obj_archives[e]+' as '+e);
+            await read_tree (obj_archives[e], archives.length);
+            archives.push (e);
+        }
+    } else {
+
+        for (const i in files) {
+            console.error (files[i]);
+            const name = files[i].match (/^([-+])((.*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
+            if (name == null || name[1] == null) {
+                console.error ("* does not match parameter pattern");
+                return;
+            }
+            if (name[1] == '-') {
+                // remove archive
+                var nr;
+                for (nr = 1; nr < archives.length; nr++) {
+                    if (name[4] === archives[nr]) {
+                        break;
+                    }
+                }
+                if (nr >= archives.length) {
+                    console.error ('* not part of archives: '+name[4]);
+                    continue;
+                }
+                console.error ("removing archive "+nr);
+                remove_archive (tree, nr);
+                archives.splice (nr, 1);
                 continue;
             }
-            console.error ("removing archive "+nr);
-            remove_archive (tree, nr);
-            archives.splice (nr, 1);
-            continue;
-        }
-        else if (name[1] == '+') {
-            // add archive
-            await read_tree (name[2], archives.length);
-            archives.push (name[4]);
+            else if (name[1] == '+') {
+                // add archive
+                await read_tree (name[2], archives.length);
+                archives.push (name[4]);
+            }
         }
     }
 
@@ -302,3 +344,13 @@ async function main () {
 };
 
 main();
+
+// Data structure:
+// Object: a "Archives" - Array of archive names TBC
+//         c "Children" - keys are dir/file names
+//         s "Size"  t "mTime"  l "link" of last added archive
+//         c available on dirs, s and t on files, l on links
+    //{"type": "d", "mode": "drwxr-xr-x", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig", "healthy": true, "source": "", "linktarget": "", "flags": 0, "isomtime": "2022-01-24T16:33:10.461280", "size": 0}
+    //{"type": "-", "mode": "-rw-r--r--", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig/64bit_strstr_via_64bit_strstr_sse2_unaligned", "healthy": true, "source": "", "linktarget": "", "flags": 0, "isomtime": "2021-11-15T19:29:28.000000", "size": 0}
+    //{"type": "l", "mode": "lrwxrwxrwx", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig/grub", "healthy": true, "source": "../default/grub", "linktarget": "../default/grub", "flags": 0, "isomtime": "2022-01-12T16:23:39.000000", "size": 15}
+
