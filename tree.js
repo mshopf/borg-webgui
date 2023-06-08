@@ -2,6 +2,7 @@ const fs  = require ('fs');
 const bz2 = require ('unbzip2-stream');
 const readline = require ('readline');
 const cp = require ('child_process');
+const config  = require ('./config');
 
 
 // walk tree structure
@@ -171,7 +172,7 @@ async function read_tree (file, archive) {
             stream = stream.pipe (bz2());
         }
     } else {
-        const child = cp.spawn ('borg', ['list', '--format', '"{type} {path} {size} {isomtime}"', '--json-lines', '::'+file]);
+        const child = cp.spawn ('borg', ['list', '--format', '"{type} {path} {size} {isomtime}"', '--json-lines', config.borg_repo+'::'+file]);
         stream = child.stdout;
     }
 
@@ -250,6 +251,7 @@ async function main () {
     const [,, datafile, ...files] = process.argv;
 
     if (datafile == null || datafile === '') {
+        // TODO: loop over all data in config.js
         console.error ('Usage: cmd datafile.json[.bz2]|- [/regex] (reads in borg list and determines added/removed archives)');
         console.error ('Usage: cmd datafile.json[.bz2]|- [[-|+]archive] [...]');
         return;
@@ -280,7 +282,7 @@ async function main () {
     if (files[0][0] === '/' && files.length === 1) {
         console.error ('reading borg archive list');
         const filter = new RegExp (files[0].slice(1));
-        const json = JSON.parse (await call_command ('borg', ['list', '--json']));
+        const json = JSON.parse (await call_command ('borg', ['list', '--json', config.borg_repo]));
         const obj_archives = { };
         for (const e of json.archives) {
             const name = e.name.match (/^((.*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
@@ -353,4 +355,3 @@ main();
     //{"type": "d", "mode": "drwxr-xr-x", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig", "healthy": true, "source": "", "linktarget": "", "flags": 0, "isomtime": "2022-01-24T16:33:10.461280", "size": 0}
     //{"type": "-", "mode": "-rw-r--r--", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig/64bit_strstr_via_64bit_strstr_sse2_unaligned", "healthy": true, "source": "", "linktarget": "", "flags": 0, "isomtime": "2021-11-15T19:29:28.000000", "size": 0}
     //{"type": "l", "mode": "lrwxrwxrwx", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig/grub", "healthy": true, "source": "../default/grub", "linktarget": "../default/grub", "flags": 0, "isomtime": "2022-01-12T16:23:39.000000", "size": 15}
-
