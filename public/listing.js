@@ -1,12 +1,18 @@
 var archives = [];
-var tree = {};
-const urlParams = new URLSearchParams(window.location.search);
-const backup = urlParams.get ('backup');
-const days = [ 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday' ];
+var tree     = {};
 
-document.getElementById ('backup') .innerHTML = escapeHtml (backup);
+const urlParams = new URLSearchParams(window.location.search);
+const backup    = urlParams.get ('backup');
 const backupurl = encodeURIComponent (backup);
-document.getElementById ('button') .addEventListener ('click', initiate_restore);
+const days      = [ 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday' ];
+
+const html_root          = document.getElementById ('root');
+const html_backup        = document.getElementById ('backup');
+const html_button        = document.getElementById ('button');
+const html_possibilities = document.getElementById ('possibilities');
+
+html_backup.innerHTML = escapeHtml (backup);
+html_button.addEventListener ('click', initiate_restore);
 
 fetch ('/api/archives/'+backupurl, { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }})
 .then (res => res.json())
@@ -19,7 +25,7 @@ fetch ('/api/archives/'+backupurl, { headers : { 'Content-Type': 'application/js
     tree = json;
     tree.y = false;
     refs[0] = tree;
-    update_list (document.getElementById ('root'), tree);
+    update_list (html_root, tree);
 });
 
 function escapeHtml(x) {
@@ -92,16 +98,7 @@ async function update_list (root, tree) {
         }
         entries.push (t.i);
         html += `<li id=${t.i}>`;
-
-        const ar = generate_datedescr (t.a);
-        if (ar.length > 5) {
-            ar .splice (5);
-            ar .push ('...');
-        }
-        if (ar.length < 1) {
-            ar .push ('(empty)');
-        }
-        html += `<div class="${get_selection_classes(t.y)}"><span>${ar.join(' ')}</span></div><div class="${get_disclosure_classes(t)}">`;
+        html += `<div class="${get_selection_classes(t.y)}"><span>${arToDescr (t.a, 5) .join (' ')}</span></div><div class="${get_disclosure_classes(t)}">`;
 
         if (e.startsWith ('/')) {
             html += escapeHtml (e.slice(1));
@@ -126,28 +123,43 @@ async function update_list (root, tree) {
     }
 }
 
-function generate_datedescr (array) {
+function arToDescr (array, maxSize) {
     var ar = [];
-    var last = 0, count = 0, long = '';
+    var last = 0, count = 0, short = '', long = '';
+    if (array == null) {
+        return [ '(none selected)' ];
+    }
     for (const a of [...array, 1e30]) {
         if (a == last+1) {
             last = a;
+            if (short === '') {
+                short = archives[a].short;
+            }
             long += '\n' + archives[a].descr;
             count++;
         } else {
             if (count > 0) {
-                var str = escapeHtml (archives[last].short);
+                var str = escapeHtml (short);
                 if (count > 1) {
                     str += '('+count+')';
                 }
                 ar.push (`<span title="${escapeHtml(long)}">${str}</span>`);
             }
             if (a < 1e29) {
-                last = Math.abs(a);
-                long = archives[last].descr;
+                last  = Math.abs(a);
+                short = archives[last].short;
+                long  = archives[last].descr;
                 count = 1;
             }
         }
+    }
+
+    if (ar.length > maxSize) {
+        ar .splice (maxSize);
+        ar .push ('...');
+    }
+    if (ar.length < 1) {
+        ar .push ('(none available)');
     }
     return ar;
 }
@@ -234,6 +246,68 @@ function toggle_entry (evt) {
     }
     set_selection_up   (t, t.y);
     set_selection_down (t, t.y);
+    const ar = find_available_archives (tree, null);
+    if (ar == null || ar.length == 0) {
+        html_button.disabled = true;
+        html_possibilities.innerHTML = arToDescr (ar, 1);
+    } else {
+        html_button.disabled = true;
+        html_possibilities.innerHTML = arToDescr (ar, 8) .reduce (
+             (res, e, i) => `${res}<input type=radio name=ar value=${ar[i]}>${e} - `, '')
+            .slice (0, -3);
+        html_possibilities.querySelectorAll ('input') .forEach ((e) => e.addEventListener ('click', toggle_select));
+    }
+}
+
+function toggle_select () {
+    html_button.disabled = false;
+}
+
+// return available archives for selected backup set
+function find_available_archives (t, ar) {
+    // Endpoint - either single file or fully to be restored dir
+    if (t.y === true) {
+        return merge_ar (ar, t.a?.length > 0 ? t.a : null);
+    }
+    // Nothing to restore below
+    if (t.y === undefined) {
+        return ar;
+    }
+    // Descend if anything below
+    for (const e in t.c) {
+        ar = merge_ar (ar, find_available_archives (t.c[e], ar));
+    }
+    return ar;
+}
+function merge_ar (ar, todo) {
+    var new_ar = [];
+    if (ar == null) {
+        return todo;
+    }
+    if (todo == null) {
+        return ar;
+    }
+    if (todo.length == 0) {
+        return todo;
+    }
+    // i: index over new entries, j: index over old current entries
+    for (var i = 0, j = 0; i < todo.length; i++) {
+        // Entries not in original set
+        while (Math.abs (Math.abs(ar[j]) < Math.abs (todo[i]))) {
+            j++;
+        }
+        if (ar[j] === todo[i]) {
+            // New is the same, advance both indices
+            new_ar.push (ar[j++]);
+        } else if (ar[j] === -todo[i]) {
+            // New is the same, with different sign, advance both indices,
+            // push negative entry (negative wins over positive)
+            new_ar.push (- Math.abs (ar[j++]));
+        } else {
+            // Entries not the new set
+        }
+    }
+    return new_ar;
 }
 
 // return list of full paths for (fully to be restored) directories and files
@@ -255,11 +329,16 @@ function find_end_paths (t, p, list) {
 }
 
 async function initiate_restore () {
-    if (confirm ('Are you sure to start the restore process on the selected files?')) {
-        // TODO: select archive
+    const ar = document.querySelector('input[name=ar]:checked').value;
+    if (ar == null) {
+        console.log ('this should not happen');
+        return;
+    }
+    const name = archives[Math.abs(ar)].name;
+    if (confirm (`Are you sure to start the restore process on the selected files from archive ${name}?`)) {
         const list = [];
         find_end_paths (tree, '', list);
-        obj = { archive: archives[1].name, list: list.sort() };
+        obj = { archive: name, list: list.sort() };
         // recurse
         const response = await fetch ('/api/restore/' + backupurl,
                                       {   method: 'POST',
