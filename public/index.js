@@ -23,7 +23,7 @@ function escapeQuery(x) {
 async function update_backups (root) {
     var html = '<ul>';
     for (const e in backups) {
-        html += `<li><a href="listing.html?backup=${escapeQuery(e)}"><div class=entry>${escapeHtml(''+backups[e])} Archives</div><div class=path>${escapeHtml(e)}</div></a></li>`;
+        html += `<li><a href="listing.html?backup=${escapeQuery(e)}"><div class=entry>${escapeHtml(''+backups[e])} Archives</div><div class=path><b>${escapeHtml(e)}</b></div></a></li>`;
     }
     root.innerHTML = html+'</ul>';
 }
@@ -38,7 +38,7 @@ async function update_state (root) {
             info += ' - Started ' + (new Date (e.texecute) .toLocaleTimeString());
         }
 
-        html += `<li><div class="entry ${escapeHtml(e.state)}">${info}</div><div class=path>${escapeHtml(e.handle)} - ${escapeHtml(e.firstfullpath)}...</div></li>`;
+        html += `<li><div class="entry ${escapeHtml(e.state)}">${info}</div><div class=path><b>${escapeHtml(e.handle)}</b> from ${escapeHtml(e.archive)}: ${escapeHtml(e.firstfullpath)}...</div></li>`;
     }
     if (state.length == 0) {
         html += '<li>None</li>'

@@ -62,12 +62,12 @@ app.use (express.static (path.join (__dirname, 'public')));
 app.get ('/api/status', function (req, res) {
     var response = { backups: {}, state: [] };
     for (const e in trees) {
-        response.backups[e] = trees[e].archives.length;
+        response.backups[e] = trees[e].archives.length -1;
     }
     for (const e in queue) {
         response.state[e]  = { handle: queue[e].handle, state: queue[e].state, info: queue[e].info,
                                tschedule: queue[e].tschedule, texecute: queue[e].texecute, tfinish: queue[e].tfinish,
-                               firstfullpath: queue[e].firstfullpath };
+                               firstfullpath: queue[e].firstfullpath, archive: queue[e].archive };
     }
     res.json (response);
 });
