@@ -85,6 +85,7 @@ app.get ('/api/data/:backup/:path(*)', function (req, res) {
         return res .status (404) .send (null);
     }
     var t = data.tree;
+
     if (req.params.path !== '') {
         const elems = req.params.path.split ('/');
         for (const e of elems) {
@@ -95,6 +96,7 @@ app.get ('/api/data/:backup/:path(*)', function (req, res) {
             }
         }
     }
+
     const copy = Object.assign ({}, t);
     copy.c = Object.assign ({}, copy.c);
     for (const i in copy.c) {
@@ -104,8 +106,6 @@ app.get ('/api/data/:backup/:path(*)', function (req, res) {
         }
     }
 
-    //console.log (req.params.path + ' - ' + JSON.stringify (copy));
-    console.log (req.params.path);
     res.json (copy);
 });
 
@@ -115,10 +115,12 @@ app.post ('/api/restore/:backup', function (req, res) {
     if (list === undefined || list.length == 0) {
         return res .status (500) .send (null);
     }
+
     const data = trees[req.params.backup];
     if (data === undefined) {
         return res .status (403) .send (null);
     }
+
     for (const e of data.archives) {
         if (e === ar) {
             const handle = queue_request ({ backup: req.params.backup, archive: ar, list, firstfullpath: list[0] });
@@ -134,7 +136,6 @@ var queue_active = 0;
 
 function queue_request (obj) {
     obj.handle = crypto .randomBytes (4) .toString ('hex');
-    obj.active = true;
     obj.tschedule = Date.now();
     obj.state  = 'wait';
     obj.info   = 'queued';
@@ -149,13 +150,14 @@ function queue_request (obj) {
 async function run_queue () {
     while (queue_active > 0) {
         for (const q of queue) {
-            if (q.active) {
+            if (q.state === 'wait') {
                 console.log ('Starting restore process '+q.handle);
                 q.state  = 'run';
                 q.info     = 'running';
                 q.texecute = Date.now();
+
                 const result = await execute_borg_extract (q);
-                console.log ('Finished restore process '+q.handle+' - '+JSON.stringify (result));
+
                 if (result.error !== undefined) {
                     q.state = 'err';
                     q.info  = 'error '+result.error;
@@ -164,8 +166,8 @@ async function run_queue () {
                     q.info  = 'finished restoring '+result.lines+' entries';
                 }
                 q.tfinish  = Date.now();
-                q.active   = false;
                 queue_active--;
+                console.log ('Finished restore process '+q.handle+' - '+JSON.stringify (result));
             }
         }
     }
