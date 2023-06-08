@@ -7,6 +7,7 @@ const bz2     = require ('unbzip2-stream');
 const cp      = require ('child_process');
 const readline = require ('readline');
 const crypto  = require ('crypto');
+const argon2  = require ('argon2');
 const config  = require ('./config');
 
 const app     = express ();
@@ -51,6 +52,21 @@ async function loadAll () {
     console.log ('All data successfully loaded');
 }
 
+// Middleware for checking passwords
+async function check_passwd (req, res, next) {
+    // parse login and password from headers
+    const b64auth = (req.headers.authorization || '') .split(' ')[1] || '';
+    const strauth = Buffer.from (b64auth, 'base64') .toString();
+    const [_, user, password] = strauth.match (/(.*?):(.*)/) || [];
+    // verify
+    if (user != null && user === config.user && password != null && await argon2.verify (config.pwd, password)) {
+        return next()
+    }
+    // access denied...
+    res .setHeader ('WWW-Authenticate', 'Basic realm="borg-backup"');
+    res .status (401) .send ('Authentication required.');
+}
+
 
 // data will only be available after it has been successfully loaded
 loadAll ();
@@ -71,6 +87,8 @@ app.get ('/api/status', function (req, res) {
     }
     res.json (response);
 });
+
+app.use ('/api/', check_passwd);
 
 app.get ('/api/archives/:backup', function (req, res) {
     if (trees[req.params.backup] === undefined) {
