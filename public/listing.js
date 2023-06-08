@@ -1,8 +1,8 @@
 var archives = [];
 var tree = {};
-const days = [ 'Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag' ];
 const urlParams = new URLSearchParams(window.location.search);
 const backup = urlParams.get ('backup');
+const days = [ 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday' ];
 
 document.getElementById ('backup') .innerHTML = escapeHtml (backup);
 const backupurl = encodeURIComponent (backup);
@@ -34,7 +34,7 @@ function parse_archives (ar) {
                 console.log ('Invalid date: '+e);
             }
             entry.time = d.getTime();
-            entry.descr = 'Backup performed on '+d.toLocaleDateString();
+            entry.descr = 'Backup performed on '+d.toLocaleString();
             // Parse all times *before* 6am as day before - that's the way people tick
             const t = entry.time - 6*60*60*1000;
             const dd = new Date (t);
@@ -145,7 +145,7 @@ function generate_datedescr (array) {
             count++;
         } else {
             if (count > 0) {
-                var str = archives[last].short;
+                var str = escapeHtml (archives[last].short);
                 if (count > 1) {
                     str += '('+count+')';
                 }
