@@ -210,15 +210,18 @@ async function execute_borg_extract (q) {
     pat.writeFile ('!*\n');
     await pat.close();
 
-    await log.writeFile (`\n***********\n\nrestore path: ${trees[q.backup].restore}/${q.archive}\n`);
-    await fs.promises.mkdir (trees[q.backup].restore+'/'+q.archive, { recursive: true });
+    const cwd = trees[q.backup].restore + '/' + q.archive
+    await log.writeFile (`\n***********\n\nrestore path: ${cwd}\n`);
+    await fs.promises.mkdir (cwd, { recursive: true });
 
     const args = ['extract', '--list', ...trees[q.backup].borg_args??[], '--patterns-from', '/tmp/borg-restore-'+q.handle+'.patterns', '::'+q.backup+'-'+q.archive];
     await log.writeFile ('borg '+args.join(' ')+'\n');
     await log.writeFile ('\n***********\n\n');
 
-    const borg = cp.spawn ('borg', args, {stdio: ['ignore', 'pipe', 'pipe'], cwd: trees[q.backup].restore });
+    const borg = cp.spawn ('borg', args, {stdio: ['ignore', 'pipe', 'pipe'], cwd });
     const borg_promise = new Promise ((resolve, reject) => borg.on ('close', (code, signal) => resolve({code, signal}) ));
+    var borg_stderr_open = true;
+    borg.stdout.on ('close', () => borg_stderr_open = false );  // not needed for stdout, no new tick happened => still open
 
     const rl = readline.createInterface ({ input: borg.stdout, output: null, terminal: false });
     var lines = 0;
@@ -226,9 +229,11 @@ async function execute_borg_extract (q) {
         await log.writeFile (line+'\n');
         lines++;
     }
-    const rl2 = readline.createInterface ({ input: borg.stderr, output: null, terminal: false });
-    for await (const line of rl2) {
-        await log.writeFile (line+'\n');
+    if (borg_stderr_open) {
+        const rl2 = readline.createInterface ({ input: borg.stderr, output: null, terminal: false });
+        for await (const line of rl2) {
+            await log.writeFile (line+'\n');
+        }
     }
 
     const { code, signal } = await borg_promise;
