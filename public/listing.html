@@ -52,9 +52,16 @@
     .entry.partial {
         background-image:url('q_g.png');
     }
+    .buttonbox {
+        text-align: center;
+        background-color: #f0f0f0;
+        border: 2px solid gray;
+        padding: 10px;
+        margin: 5px 0;
     </style>
 </head><body>
     <h3>Backup of <span id=backup>%</span></h3>
+    <div class=buttonbox><input type=button value="Restore selected elements" id=button></div>
     <!-- root level entry div to have the system some (hidden) entry to find and change -->
     <div id=0><div class=entry></div><div class=path></div><div class=sub id=root></div></div>
     <script src=listing.js></script>

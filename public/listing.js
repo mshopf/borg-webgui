@@ -6,6 +6,7 @@ const days = [ 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
 
 document.getElementById ('backup') .innerHTML = escapeHtml (backup);
 const backupurl = encodeURIComponent (backup);
+document.getElementById ('button') .addEventListener ('click', initiate_restore);
 
 fetch ('/api/archives/'+backupurl, { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }})
 .then (res => res.json())
@@ -16,6 +17,7 @@ fetch ('/api/archives/'+backupurl, { headers : { 'Content-Type': 'application/js
 .then (res => res.json())
 .then (json => {
     tree = json;
+    tree.y = false;
     refs[0] = tree;
     update_list (document.getElementById ('root'), tree);
 });
@@ -232,6 +234,41 @@ function toggle_entry (evt) {
     }
     set_selection_up   (t, t.y);
     set_selection_down (t, t.y);
+}
+
+// return list of full paths for (fully to be restored) directories and files
+function find_end_paths (t, p, list) {
+    // Endpoint - either single file or fully to be restored dir
+    console.log (t)
+    if (t.y === true) {
+        list.push (p);
+        return;
+    }
+    // Nothing to restore below
+    if (t.y === undefined) {
+        return;
+    }
+    // Descend if anything below
+    for (const e in t.c) {
+        var sub = p + (e.startsWith ('/') ? e.slice(1) + '/' : e);
+        find_end_paths (t.c[e], sub, list);
+    }
+}
+
+async function initiate_restore () {
+    if (confirm ('Are you sure to start the restore process on the selected files?')) {
+        // TODO: select archive
+        const list = [];
+        find_end_paths (tree, '', list);
+        obj = { archive: archives[1].name, list: list.sort() };
+        // recurse
+        const response = await fetch ('/api/restore/' + backupurl,
+                                      {   method: 'POST',
+                                          headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                                          body: JSON.stringify (obj)
+                                      });
+        confirm ('Handle for your request: ' + (await response .json ()) + ' - This process will take some time!');
+    }
 }
 
 // Data structure:

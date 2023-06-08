@@ -1,10 +1,6 @@
 <html><head>
     <title>Borg Backup Restore</title>
     <style>
-    #root>ul>li {
-        width: 50%;
-        box-sizing: border-box;
-    }
     ul {
         margin: 0;
         padding: 0;
@@ -15,13 +11,15 @@
         padding-left: 20px;
     }
     .path {
+        width: 50%;
+        box-sizing: border-box;
         padding-left: 20px;
         overflow: hidden;
         white-space: nowrap;
         background-repeat:no-repeat;
         background-position:left top;
     }
-    .path:hover {
+    li:hover {
         background-color: #e0e0e0;
     }
     .entry {
@@ -38,5 +36,7 @@
 </head><body>
     <h3>Backups</h3>
     <div id=root></div>
+    <h3>Currently scheduled restores</h3>
+    <div id=state></div>
     <script src=index.js></script>
     </body></html>

@@ -5,6 +5,7 @@ const path    = require ('path');
 const fs      = require ('fs');
 const bz2     = require ('unbzip2-stream');
 const cp      = require ('child_process');
+const crypto  = require ('crypto');
 const config  = require ('./config');
 
 const app     = express ();
@@ -25,25 +26,25 @@ async function call_command (bin, args) {
     return streamToString (child.stdout);
 }
 
-async function loadTree (file) {
-    const name = file.match (/^(.*?)([^/]*)-backup-tree(\.json)?(\.bz2)?$/);
+async function loadTree (conf) {
+    const name = conf.tree.match (/^(.*?)([^/]*)-backup-tree(\.json)?(\.bz2)?$/);
     if (name == null || name[2] == null || name[2] == '') {
-        throw Error (file+' does not match file pattern');
+        throw Error (conf.tree+' does not match file pattern');
     }
 
     console.error ('Reading data '+name[2]);
-    var stream = fs.createReadStream (file);
-    if (file.slice (-4) === '.bz2') {
+    var stream = fs.createReadStream (conf.tree);
+    if (conf.tree.slice (-4) === '.bz2') {
         stream = stream.pipe (bz2());
     }
     var data = JSON.parse (await streamToString (stream));
-    trees[name[2]] = { archives: data[0], tree: data[1] };
+    trees[name[2]] = { archives: data[0], tree: data[1], restore: conf.restore };
     console.log ('Memory Usage: '+ process.memoryUsage().heapUsed/(1024*1024) + ' MB');
 }
 
 async function loadAll () {
     console.log ('Memory Usage: '+ process.memoryUsage().heapUsed/(1024*1024) + ' MB');
-    for (const f of config.trees) {
+    for (const f of config.data) {
         await loadTree (f);
     }
     console.log ('All data successfully loaded');
@@ -53,12 +54,19 @@ async function loadAll () {
 // data will only be available after it has been successfully loaded
 loadAll ();
 
+app.use (express.json ());
+app.use (express.urlencoded ({ extended: true }));
 app.use (express.static (path.join (__dirname, 'public')));
 
-app.get ('/api/backups', function (req, res) {
-    var response = {};
+app.get ('/api/status', function (req, res) {
+    var response = { backups: {}, state: [] };
     for (const e in trees) {
-        response[e] = trees[e].archives.length;
+        response.backups[e] = trees[e].archives.length;
+    }
+    for (const e in queue) {
+        response.state[e]  = { handle: queue[e].handle, info: queue[e].info,
+                               tschedule: queue[e].tschedule, texecute: queue[e].texecute, tfinish: queue[e].tfinish,
+                               firstfullpath: queue[e].firstfullpath };
     }
     res.json (response);
 });
@@ -71,10 +79,11 @@ app.get ('/api/archives/:backup', function (req, res) {
 });
 
 app.get ('/api/data/:backup/:path(*)', function (req, res) {
-    var t = trees[req.params.backup].tree;
-    if (t === undefined) {
+    const data = trees[req.params.backup];
+    if (data === undefined) {
         return res .status (404) .send (null);
     }
+    var t = data.tree;
     if (req.params.path !== '') {
         const elems = req.params.path.split ('/');
         for (const e of elems) {
@@ -99,7 +108,59 @@ app.get ('/api/data/:backup/:path(*)', function (req, res) {
     res.json (copy);
 });
 
+app.post ('/api/restore/:backup', function (req, res) {
+    const ar   = req.body.archive;
+    const list = req.body.list;
+    if (list === undefined || list.length == 0) {
+        return res .status (500) .send (null);
+    }
+    const data = trees[req.params.backup];
+    if (data === undefined) {
+        return res .status (403) .send (null);
+    }
+    for (const e of data.archives) {
+        if (e === ar) {
+            const handle = queue_request ({ backup: req.params.backup, archive: ar, list, firstfullpath: list[0] });
+            return res .json (handle);
+        }
+    }
 
+    return res .status (404) .send (null);
+});
+
+var queue = [];
+var queue_active = 0;
+
+function queue_request (obj) {
+    obj.handle = crypto .randomBytes (4) .toString ('hex');
+    obj.active = true;
+    obj.tschedule = Date.now();
+    obj.info   = 'queued';
+    queue .push (obj);
+    queue_active++;
+    if (queue_active === 1) {
+        run_queue ();
+    }
+    return obj.handle;
+}
+
+async function run_queue () {
+    while (queue_active > 0) {
+        for (const q of queue) {
+            if (q.active) {
+                console.log ('Starting restore process '+q.handle);
+                q.info     = 'running';
+                q.texecute = Date.now();
+                await new Promise ((resolve, reject) => setTimeout (resolve, 30000));
+                console.log ('Finished restore process '+q.handle);
+                q.info     = 'finished';
+                q.tfinish  = Date.now();
+                q.active   = false;
+                queue_active--;
+            }
+        }
+    }
+}
 
 var server;
 if (config.httpPort) {
@@ -135,5 +196,3 @@ if (config.httpsPort) {
         console.log ('Express https server listening on port ' + config.httpsPort);
     });
 }
-
-
