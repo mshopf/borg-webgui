@@ -99,7 +99,7 @@ async function update_list (root, tree) {
         if (ar.length < 1) {
             ar .push ('(empty)');
         }
-        html += `<div class="${get_selection_classes(t.y)}">${ar.join(' ')}</div><div class="`;
+        html += `<div class="${get_selection_classes(t.y)}"><span>${ar.join(' ')}</span></div><div class="`;
         if (t.c !== undefined) {
             html += get_disclosure_classes(t);
             dirs.push (t.i);
