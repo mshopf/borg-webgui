@@ -1,13 +1,17 @@
 var archives = [];
 var tree = {};
 const days = [ 'Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag' ];
+const urlParams = new URLSearchParams(window.location.search);
+const backup = urlParams.get ('backup');
 
-fetch ('archives.json', { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }})
+document.getElementById ('backup') .innerHTML = escapeHtml (backup);
+const backupurl = encodeURIComponent (backup);
+
+fetch ('/api/archives/'+backupurl, { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }})
 .then (res => res.json())
 .then (json => {
     archives = parse_archives (json);
-//    return fetch ('data.json', { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }});
-    return fetch ('/data/', { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }});
+    return fetch ('/api/data/'+backupurl+'/', { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }});
 })
 .then (res => res.json())
 .then (json => {
@@ -69,7 +73,8 @@ async function update_list (root, tree) {
                 }
             }
         }
-        const response = await fetch ('/data'+path, { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }});
+        const response = await fetch ('/api/data/' + backupurl + encodeURI (path),
+                                      { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }});
         tree.c = (await response .json ()) .c;
         if (tree.y === true) {
             for (const e in tree.c) {

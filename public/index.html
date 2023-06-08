@@ -24,35 +24,19 @@
     .path:hover {
         background-color: #e0e0e0;
     }
-    .path.dir {
-        background-image:url('tri_r.png');
-    }
-    .path.open {
-        background-image:url('tri_d.png');
-    }
     .entry {
         position: absolute;
         right: 0;
         width: 50%;
         box-sizing: border-box;
-        padding-left: 20px;
+        padding-left: 2px;
         margin-left: 2px;
-        background-repeat:no-repeat;
-        background-position:left top;
-        background-image:url('q_w.png');
         color: gray;
         font-size: 90%;
     }
-    .entry.selected {
-        background-image:url('q_b.png');
-    }
-    .entry.partial {
-        background-image:url('q_g.png');
-    }
     </style>
 </head><body>
-    <h3>Backup of <span id=backup>%</span></h3>
-    <!-- root level entry div to have the system some (hidden) entry to find and change -->
-    <div id=0><div class=entry></div><div class=path></div><div class=sub id=root></div></div>
-    <script src=listing.js></script>
+    <h3>Backups</h3>
+    <div id=root></div>
+    <script src=index.js></script>
     </body></html>

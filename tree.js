@@ -1,11 +1,11 @@
 const fs  = require ('fs');
-const node_stream = require('stream');
 const bz2 = require ('unbzip2-stream');
 const readline = require ('readline');
 const cp = require ('child_process');
 
 
 // walk tree structure
+// unused, just kept for reference purposes
 function walk_tree (tree, path, level=0) {
     var ar = "";
     for (const e of tree.a) {
@@ -233,11 +233,11 @@ var archives, tree, last_tree, last_path;
 
 function streamToString (stream) {
     const chunks = [];
-    return new Promise((resolve, reject) => {
-        stream.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
-        stream.on('error', (err) => reject(err));
-        stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    })
+    return new Promise ((resolve, reject) => {
+        stream.on ('data',  (chunk) => chunks.push (Buffer.from (chunk)));
+        stream.on ('error', (err)   => reject  (err));
+        stream.on ('end',   ()      => resolve (Buffer .concat (chunks) .toString ('utf8')));
+    });
 }
 async function call_command (bin, args) {
     const child = cp.spawn (bin, args);
