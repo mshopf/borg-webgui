@@ -38,7 +38,7 @@ async function update_state (root) {
             info += ' - Started ' + (new Date (e.texecute) .toLocaleTimeString());
         }
 
-        html += `<li><div class=entry>${info}</div><div class=path>${escapeHtml(e.handle)} - ${escapeHtml(e.firstfullpath)}...</div></li>`;
+        html += `<li><div class="entry ${escapeHtml(e.state)}">${info}</div><div class=path>${escapeHtml(e.handle)} - ${escapeHtml(e.firstfullpath)}...</div></li>`;
     }
     if (state.length == 0) {
         html += '<li>None</li>'

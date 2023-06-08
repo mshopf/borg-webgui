@@ -5,6 +5,7 @@ const path    = require ('path');
 const fs      = require ('fs');
 const bz2     = require ('unbzip2-stream');
 const cp      = require ('child_process');
+const readline = require ('readline');
 const crypto  = require ('crypto');
 const config  = require ('./config');
 
@@ -27,18 +28,18 @@ async function call_command (bin, args) {
 }
 
 async function loadTree (conf) {
-    const name = conf.tree.match (/^(.*?)([^/]*)-backup-tree(\.json)?(\.bz2)?$/);
+    const name = conf.file.match (/^(.*?)([^/]*)-backup-tree(\.json)?(\.bz2)?$/);
     if (name == null || name[2] == null || name[2] == '') {
         throw Error (conf.tree+' does not match file pattern');
     }
 
     console.error ('Reading data '+name[2]);
-    var stream = fs.createReadStream (conf.tree);
-    if (conf.tree.slice (-4) === '.bz2') {
+    var stream = fs.createReadStream (conf.file);
+    if (conf.file.slice (-4) === '.bz2') {
         stream = stream.pipe (bz2());
     }
     var data = JSON.parse (await streamToString (stream));
-    trees[name[2]] = { archives: data[0], tree: data[1], restore: conf.restore };
+    trees[name[2]] = { archives: data[0], tree: data[1], ...conf };
     console.log ('Memory Usage: '+ process.memoryUsage().heapUsed/(1024*1024) + ' MB');
 }
 
@@ -64,7 +65,7 @@ app.get ('/api/status', function (req, res) {
         response.backups[e] = trees[e].archives.length;
     }
     for (const e in queue) {
-        response.state[e]  = { handle: queue[e].handle, info: queue[e].info,
+        response.state[e]  = { handle: queue[e].handle, state: queue[e].state, info: queue[e].info,
                                tschedule: queue[e].tschedule, texecute: queue[e].texecute, tfinish: queue[e].tfinish,
                                firstfullpath: queue[e].firstfullpath };
     }
@@ -135,6 +136,7 @@ function queue_request (obj) {
     obj.handle = crypto .randomBytes (4) .toString ('hex');
     obj.active = true;
     obj.tschedule = Date.now();
+    obj.state  = 'wait';
     obj.info   = 'queued';
     queue .push (obj);
     queue_active++;
@@ -149,11 +151,18 @@ async function run_queue () {
         for (const q of queue) {
             if (q.active) {
                 console.log ('Starting restore process '+q.handle);
+                q.state  = 'run';
                 q.info     = 'running';
                 q.texecute = Date.now();
-                await new Promise ((resolve, reject) => setTimeout (resolve, 30000));
-                console.log ('Finished restore process '+q.handle);
-                q.info     = 'finished';
+                const result = await execute_borg_extract (q);
+                console.log ('Finished restore process '+q.handle+' - '+JSON.stringify (result));
+                if (result.error !== undefined) {
+                    q.state = 'err';
+                    q.info  = 'error '+result.error;
+                } else {
+                    q.state = 'done';
+                    q.info  = 'finished restoring '+result.lines+' entries';
+                }
                 q.tfinish  = Date.now();
                 q.active   = false;
                 queue_active--;
@@ -161,6 +170,79 @@ async function run_queue () {
         }
     }
 }
+
+async function execute_borg_extract (q) {
+    const log = await fs.promises.open ('log/'+q.handle+'.log', 'w', 0o644);
+    // use absolute path for patterns, as we run in a directory somewhere else
+    const pat = await fs.promises.open ('/tmp/borg-restore-'+q.handle+'.patterns', 'w', 0o644);
+    // Make log data human readable
+    const qlog = { ... q, texecute: new Date (q.texecute) .toLocaleString(), tschedule: new Date (q.tschedule) .toLocaleString() };
+    await log.writeFile (JSON.stringify (qlog, null, 4));
+    await log.writeFile ('\n***********\n\n');
+
+    var lastpath = '';
+    for (const e of q.list) {
+        // get all paths elements
+        var path = '';
+        var last = 0;
+        for (var index = 0; index >= 0 && index < e.length-1; index = e.indexOf ('/', index+1)) {
+            if (lastpath.substring (0, index) !== e.substring (0, index)) {
+                break;      // found unwalked directory part
+            }
+        }
+        // walk remaining directory parts
+        for (; index >= 0 && index < e.length-1; index = e.indexOf ('/', index+1)) {
+            log.writeFile ('dir  '+e.substring (0, index)+'\n');
+            pat.writeFile ('+pf:'+e.substring (0, index)+'\n');
+        }
+        if (index >= 0) {
+            log.writeFile ('dir! '+e+'\n');
+            pat.writeFile ('+pf:'+e.substring (0, index)+'\n');
+            pat.writeFile ('+pp:'+e+'\n');
+        } else {
+            log.writeFile ('file '+e+'\n');
+            pat.writeFile ('+pf:'+e+'\n');
+        }
+        lastpath = e;
+    }
+    // don't extract ANYTHING we haven't specifically added to the pattern
+    // that includes directories (so don't recurse here)
+    pat.writeFile ('!*\n');
+    await pat.close();
+
+    await log.writeFile (`\n***********\n\nrestore path: ${trees[q.backup].restore}/${q.archive}\n`);
+    await fs.promises.mkdir (trees[q.backup].restore+'/'+q.archive, { recursive: true });
+
+    const args = ['extract', '--list', ...trees[q.backup].borg_args??[], '--patterns-from', '/tmp/borg-restore-'+q.handle+'.patterns', '::'+q.backup+'-'+q.archive];
+    await log.writeFile ('borg '+args.join(' ')+'\n');
+    await log.writeFile ('\n***********\n\n');
+
+    const borg = cp.spawn ('borg', args, {stdio: ['ignore', 'pipe', 'pipe'], cwd: trees[q.backup].restore });
+    const borg_promise = new Promise ((resolve, reject) => borg.on ('close', (code, signal) => resolve({code, signal}) ));
+
+    const rl = readline.createInterface ({ input: borg.stdout, output: null, terminal: false });
+    var lines = 0;
+    for await (const line of rl) {
+        await log.writeFile (line+'\n');
+        lines++;
+    }
+    const rl2 = readline.createInterface ({ input: borg.stderr, output: null, terminal: false });
+    for await (const line of rl2) {
+        await log.writeFile (line+'\n');
+    }
+
+    const { code, signal } = await borg_promise;
+    await log.writeFile ('\n\n***********\n');
+    await log.writeFile (`Exit code ${code}, signal ${signal}\n`);
+    await log.close();
+
+    await fs.promises.unlink ('/tmp/borg-restore-'+q.handle+'.patterns');
+    if (code !== 0 || signal != null) {
+        return { error: `Exit code ${code}, signal ${signal}` };
+    }
+    return { lines };
+}
+
 
 var server;
 if (config.httpPort) {

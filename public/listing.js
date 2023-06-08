@@ -239,7 +239,6 @@ function toggle_entry (evt) {
 // return list of full paths for (fully to be restored) directories and files
 function find_end_paths (t, p, list) {
     // Endpoint - either single file or fully to be restored dir
-    console.log (t)
     if (t.y === true) {
         list.push (p);
         return;
