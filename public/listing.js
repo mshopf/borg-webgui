@@ -56,8 +56,6 @@ var global_id=1;
 var refs = [];
 async function update_list (root, tree) {
     var html = '<ul>';
-    var dirs = [];
-    var entries = [];
     if (tree.c === null) {
         // TODO: no way w/o DOM to get parent entry
         var path = '';
@@ -82,6 +80,7 @@ async function update_list (root, tree) {
             }
         }
     }
+    var entries = [];
     const props = Object.keys (tree.c) .sort ((a,b) => (a[0]=='/'?a.slice(1):a).localeCompare (b[0]=='/'?b.slice(1):b) );
     for (const e of props) {
         const t = tree.c[e];
@@ -89,6 +88,7 @@ async function update_list (root, tree) {
             t.i = global_id++;
             refs[t.i] = t;
         }
+        entries.push (t.i);
         html += `<li id=${t.i}>`;
 
         const ar = generate_datedescr (t.a);
@@ -99,15 +99,7 @@ async function update_list (root, tree) {
         if (ar.length < 1) {
             ar .push ('(empty)');
         }
-        html += `<div class="${get_selection_classes(t.y)}"><span>${ar.join(' ')}</span></div><div class="`;
-        if (t.c !== undefined) {
-            html += get_disclosure_classes(t);
-            dirs.push (t.i);
-        } else {
-            html += 'path';
-        }
-        entries.push (t.i);
-        html += '">';
+        html += `<div class="${get_selection_classes(t.y)}"><span>${ar.join(' ')}</span></div><div class="${get_disclosure_classes(t)}">`;
 
         if (e.startsWith ('/')) {
             html += escapeHtml (e.slice(1));
@@ -122,16 +114,13 @@ async function update_list (root, tree) {
     }
     html += '</ul>';
     root.innerHTML = html;
-    for (const id of dirs) {
+    for (const id of entries) {
         const elem = document.getElementById (id);
         elem .addEventListener ('click', toggle_dir);
+        elem .querySelector ('.entry') .addEventListener ('click', toggle_entry);
         if (refs[id].o) {
             await update_list (elem .querySelector ('.sub'), refs[id]);
         }
-    }
-    for (const id of entries) {
-        const elem = document.getElementById (id);
-        elem .querySelector ('.entry') .addEventListener ('click', toggle_entry);
     }
 }
 
@@ -175,6 +164,9 @@ function get_selection_classes (y) {
 async function toggle_dir (evt) {
     evt.stopPropagation();
     const t = refs[this.id];
+    if (t.c === undefined) {
+        return;
+    }
     if (! t.o) {
         t.o = true;
         await update_list (this .querySelector ('.sub'), t);
