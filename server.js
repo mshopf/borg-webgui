@@ -236,6 +236,7 @@ async function run_queue () {
                 q.tfinish  = Date.now();
                 queue_active--;
                 console.log ('Finished restore process '+q.handle+' - '+JSON.stringify (result));
+                console.log ('Memory Usage: '+ process.memoryUsage().heapUsed/(1024*1024) + ' MB');
             }
         }
     }
@@ -291,7 +292,7 @@ async function execute_borg_extract (q) {
     const borg = cp.spawn ('borg', args, {stdio: ['ignore', 'pipe', 'pipe'], cwd });
     const borg_promise = new Promise ((resolve, reject) => borg.on ('close', (code, signal) => resolve({code, signal}) ));
     var borg_stderr_open = true;
-    borg.stdout.on ('close', () => borg_stderr_open = false );  // not needed for stdout, no new tick happened => still open
+    borg.stderr.on ('close', () => borg_stderr_open = false );  // not needed for stdout, no new tick happened => still open
 
     const rl = readline.createInterface ({ input: borg.stdout, output: null, terminal: false });
     var lines = 0;
@@ -303,17 +304,18 @@ async function execute_borg_extract (q) {
         const rl2 = readline.createInterface ({ input: borg.stderr, output: null, terminal: false });
         for await (const line of rl2) {
             await log.writeFile (line+'\n');
+            lines++;
         }
     }
 
     const { code, signal } = await borg_promise;
     await log.writeFile ('\n\n***********\n');
-    await log.writeFile (`Exit code ${code}, signal ${signal}\n`);
+    await log.writeFile (`Exit code ${code}, signal ${signal}, lines ${lines}\n`);
     await log.close();
 
     await fs.promises.unlink ('/tmp/borg-restore-'+q.handle+'.patterns');
     if (code !== 0 || signal != null) {
-        return { error: `Exit code ${code}, signal ${signal}` };
+        return { error: `Exit code ${code}, signal ${signal}`, lines };
     }
     return { lines };
 }

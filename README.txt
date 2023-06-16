@@ -8,7 +8,10 @@ node -e 'async function m() { rl=require("readline").promises.createInterface({ 
 NODE_OPTIONS=--max-old-space-size=16384
 
 *** Bugs
-- # of entries restored (variable 'lines') is always 0
+- write buffer full
+  (node:414855) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 drain listeners added to [WriteStream]. Use emitter.setMaxListeners() to increase limit
+  (Use `node --trace-warnings ...` to show where the warning was created)
+
 
 *** Dev Notes
 
