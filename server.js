@@ -1,18 +1,18 @@
-const express = require ('express');
-const http    = require ('http');
-const https   = require ('https');
-const path    = require ('path');
-const fs      = require ('fs');
-const bz2     = require ('unbzip2-stream');
-const cp      = require ('child_process');
+const express  = require ('express');
+const http     = require ('http');
+const https    = require ('https');
+const path     = require ('path');
+const fs       = require ('fs');
+const fs_p     = require ('fs').promises;
+const cp       = require ('child_process');
 const readline = require ('readline');
-const crypto  = require ('crypto');
-const argon2  = require ('argon2');
-const config  = require ('./config');
+const crypto   = require ('crypto');
+const argon2   = require ('argon2');
+const data     = require ('./data');
+const config   = require ('./config');
 
-const app     = express ();
-
-const trees   = {};
+const app      = express ();
+const trees    = {};
 
 
 function streamToString (stream) {
@@ -28,28 +28,36 @@ async function call_command (bin, args) {
     return streamToString (child.stdout);
 }
 
-async function loadTree (conf) {
-    const name = conf.file.match (/^(.*?)([^/]*)-backup-tree(\.json)?(\.bz2)?$/);
+async function openTree (conf) {
+    const name = conf.file.match (/^(.*?)([^/]*)-data-tree.bin$/);
     if (name == null || name[2] == null || name[2] == '') {
         throw Error (conf.tree+' does not match file pattern');
     }
 
-    console.error ('Reading data '+name[2]);
-    var stream = fs.createReadStream (conf.file);
-    if (conf.file.slice (-4) === '.bz2') {
-        stream = stream.pipe (bz2());
+    console.error ('Opening data '+name[2]);
+    var fh = await fs_p.open (conf.file, 'r');
+    await fh.read (data.cache_buf, 0, 12, 0);
+    if (data.init_tag_buf.compare (data.cache_buf, 0, 4) != 0) {
+        throw Error ('not a bOt0 file');
     }
-    var data = JSON.parse (await streamToString (stream));
-    trees[name[2]] = { archives: data[0], tree: data[1], ...conf };
-    console.log ('Memory Usage: '+ process.memoryUsage().heapUsed/(1024*1024) + ' MB');
+    data.cache_buf_pos = 4;
+    var offset   = data.buf_read_uvs ();
+    var archives = await data.read_archives (fh, 0x20);
+    var tree     = await data.read_tree     (fh, offset);
+
+    trees[name[2]] = { archives, fh, offset, tree, cache: {}, ...conf };
 }
 
-async function loadAll () {
-    console.log ('Memory Usage: '+ process.memoryUsage().heapUsed/(1024*1024) + ' MB');
+async function openAll () {
     for (const f of config.data) {
-        await loadTree (f);
+        try {
+            await openTree (f);
+        } catch (e) {
+            console.error ('opening '+f.file+': '+e.stack);
+        }
     }
-    console.log ('All data successfully loaded');
+    console.log ('All data opened successfully');
+    console.log ('Memory Usage: '+ process.memoryUsage().heapUsed/(1024*1024) + ' MB');
 }
 
 // Middleware for checking passwords
@@ -69,7 +77,7 @@ async function check_passwd (req, res, next) {
 
 
 // data will only be available after it has been successfully loaded
-loadAll ();
+openAll ();
 
 app.use (express.json ());
 app.use (express.urlencoded ({ extended: true }));
@@ -97,31 +105,72 @@ app.get ('/api/archives/:backup', function (req, res) {
     res.json (trees[req.params.backup].archives);
 });
 
-app.get ('/api/data/:backup/:path(*)', function (req, res) {
-    const data = trees[req.params.backup];
-    if (data === undefined) {
+app.get ('/api/data/:backup/:path(*)', async function (req, res) {
+    console.log (`* api/data ${req.params.backup} ${req.params.path}`);
+    const entry = trees[req.params.backup];
+    if (entry === undefined) {
         return res .status (404) .send (null);
     }
-    var t = data.tree;
+    var t;
+    // check if dir is in cache
+    if (entry.cache[req.params.path]) {
+        console.log ('cache: '+req.params.path);
+        t = entry.cache[req.params.path];
+    } else {
+        // Start searching at root
+        t = entry.tree;
 
-    if (req.params.path !== '') {
-        const elems = req.params.path.split ('/');
-        for (const e of elems) {
-            t = t.c['/'+e];
-            if (t === undefined || t.c === undefined) {
-                res .status (404) .send (null);
-                return;
+        var p = '';
+        if (req.params.path !== '') {
+            const elems = req.params.path.split ('/');
+            for (const e of elems) {
+                p += e + '/';
+                if (entry.cache[p]) {
+                    console.log ('cached /'+p);
+                    t = entry.cache[p];
+                    continue;
+                }
+                t = t.c['/'+e];
+                if (t === undefined || (t.c === undefined && t.o === undefined)) {
+                    res .status (404) .send (null);
+                    return;
+                }
+                if (t.o > 0) {
+                    t = await data.read_tree (entry.fh, t.o);
+                    console.log ('loaded /'+p);
+                    entry.cache[p] = t;
+                    if (Object.keys (entry.cache) .length > config.max_cache_entries) {
+                        console.log ('Memory Usage: '+ process.memoryUsage().heapUsed/(1024*1024) + ' MB');
+                        console.log (`purging cache ${config.max_cache_entries} entries`);
+                        entry.cache = {};
+                    }
+                }
+            }
+        }
+        var logging = true;
+        for (const i in t.c) {
+            if (t.c[i].a === undefined) {
+                var offset = t.c[i].o;
+                t.c[i] = await data.read_tree (entry.fh, offset);
+                t.c[i].o = offset;
+                if (logging) {
+                    console.log (`fillin /${p}`);
+                    logging = false;
+                }
+                if (t.c[i].c !== undefined) {
+                    t.c[i].c = null;
+                }
             }
         }
     }
 
+    // delete references to .o - it's used differently in frontend
+    // also a security measurement
     const copy = Object.assign ({}, t);
-    copy.c = Object.assign ({}, copy.c);
+    copy.c     = Object.assign ({}, copy.c);
     for (const i in copy.c) {
         copy.c[i] = Object.assign ({}, copy.c[i]);
-        if (copy.c[i].c !== undefined) {
-            copy.c[i].c = null;
-        }
+        delete copy.c[i].o;
     }
 
     res.json (copy);
@@ -134,12 +183,12 @@ app.post ('/api/restore/:backup', function (req, res) {
         return res .status (500) .send (null);
     }
 
-    const data = trees[req.params.backup];
-    if (data === undefined) {
+    const entry = trees[req.params.backup];
+    if (entry === undefined) {
         return res .status (403) .send (null);
     }
 
-    for (const e of data.archives) {
+    for (const e of entry.archives) {
         if (e === ar) {
             const handle = queue_request ({ backup: req.params.backup, archive: ar, list, firstfullpath: list[0] });
             return res .json (handle);
