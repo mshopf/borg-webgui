@@ -67,8 +67,9 @@ async function check_passwd (req, res, next) {
     const strauth = Buffer.from (b64auth, 'base64') .toString();
     const [_, user, password] = strauth.match (/(.*?):(.*)/) || [];
     // verify
-    if (user != null && user === config.user && password != null && await argon2.verify (config.pwd, password)) {
-        return next()
+    if (user != null && config.auth[user] !== undefined && password != null &&
+        await argon2.verify (config.auth[user].pwd, password)) {
+        return next();
     }
     // access denied...
     res .setHeader ('WWW-Authenticate', 'Basic realm="borg-backup"');
