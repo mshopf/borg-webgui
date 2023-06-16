@@ -208,7 +208,7 @@ async function read_tree (file, archive) {
         // Something different - find in tree and create entries as necessary
         const entry = path.slice (last_index+1);
         if (obj.type === '-') {
-            add_node (last_tree, entry, archive, obj.size, obj.isomtime, undefined);
+            add_node (last_tree, entry, archive, obj.size, Date.parse (obj.isomtime+'Z'), undefined);
         } else if (obj.type === 'l') {
             add_node (last_tree, entry, archive, undefined, undefined, obj.linktarget)
         } else {
@@ -302,7 +302,7 @@ async function main () {
                 data.cache_buf_pos = 4;
                 var initial_tree_offset = data.buf_read_uvs ();
 
-                archives = await data.read_archives (fh, 0x10);
+                archives = await data.read_archives (fh, 0x20);
                 tree     = await read_full_bin_tree (fh, initial_tree_offset);
 
                 await fh.close ();
@@ -393,9 +393,8 @@ async function main () {
     data.file_currentoffset = 0;
     st.on ('error', (e) => {throw e});
 
-    data.cache_buf_pos = 0x10;
+    data.cache_buf_pos = 0x20;
     await data.write_archives (st, archives);
-
     await write_full_bin_tree (st, tree);
 
     // flush write buffer unconditionally

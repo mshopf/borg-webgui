@@ -54,7 +54,19 @@ Variable sized integer (svs (signed))
 - -0x8000000000000000-0x7fffffffffffffff   - hi-to-lo 8x 1sxxxxxx  ...  xxxxxxxx (lo 8(!) bits)
 
 
+File Format
+===========
+
+0x0000..0x0003       Magic 'bOt0' - binary offset tree 0
+0x0004..0x000b(max)  uvs  Offset to root (at end of file)
+      ..0x0014(max)  uvs  Current time, used for time offset coding (currently not set / unused)
+0x0020..             tree data
+
+
+
+
 TODO: Future work - generic data structure
+==========================================
 
 0x0000..0x0003  Magic 'bOt1' - binary offset tree 1
 0x0004..0x000c  uvs  Offset to root (at end of file)

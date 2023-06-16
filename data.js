@@ -1,3 +1,5 @@
+// TODO: vars unused, only as docu and initializer
+// TODO: make a real class
 const VS_LENGTH_MAX      = 9           // Max 9 Bytes for 64bit numbers
 const DEFAULT_READ_SIZE  = 4*1024;
 const FILE_LENGTH_MAX    = 256;        // limits.h: NAME_MAX
@@ -218,7 +220,7 @@ async function write_tree (st, tree) {
     // .s .t.length .l.length .a.length .c.length/null + a*svs + .t + .t
     await buf_check_flush (st, (5+tree.a.length) * _.VS_LENGTH_MAX + 2 * _.PATH_LENGTH_MAX);
     buf_write_uvs    (tree.s);
-    buf_write_string (tree.t);
+    buf_write_uvs    (tree.t);
     buf_write_string (tree.l);
     buf_write_uvs    (tree.a.length);
     for (const e of tree.a) {
@@ -342,7 +344,7 @@ async function read_tree (fd, offset) {
     await buf_file_offset (fd, offset);
     var t = { a: [] };
     t.s = buf_read_uvs();
-    t.t = buf_read_string();
+    t.t = buf_read_uvs();
     t.l = buf_read_string();
     var len = buf_read_uvs();
     for (var i = 0; i < len; i++) {
