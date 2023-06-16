@@ -60,14 +60,14 @@ function buf_write_string (str) {
 function buf_write_uvs (num) {
     if (num == null) {  // || undefined
         if (num === undefined) {
-            _.cache_buf_pos = _.cache_buf.writeUInt16BE (0x8000, _.cache_buf_pos);
+            _.cache_buf_pos = _.cache_buf.writeUInt8 (0x7e, _.cache_buf_pos);
         } else {
-            _.cache_buf_pos = _.cache_buf.writeUInt16BE (0x8001, _.cache_buf_pos);
+            _.cache_buf_pos = _.cache_buf.writeUInt8 (0x7f, _.cache_buf_pos);
         }
         return;
     }
     // Alternative: count number of bits and select by that
-    if (num < 0x00000080) {
+    if (num < 0x0000007e) {
         _.cache_buf_pos = _.cache_buf.writeUInt8 (num       & 0x7f,        _.cache_buf_pos);
     } else if (num < 0x00004000) {
         _.cache_buf_pos = _.cache_buf.writeUInt8 ((num>>7)  & 0x7f | 0x80, _.cache_buf_pos);
@@ -134,14 +134,14 @@ function buf_write_uvs (num) {
 function buf_write_svs (num) {
     if (num == null) {  // || undefined
         if (num === undefined) {
-            _.cache_buf_pos = _.cache_buf.writeUInt16BE (0x8000, _.cache_buf_pos);
+            _.cache_buf_pos = _.cache_buf.writeUInt8 (0x41, _.cache_buf_pos);
         } else {
-            _.cache_buf_pos = _.cache_buf.writeUInt16BE (0x8001, _.cache_buf_pos);
+            _.cache_buf_pos = _.cache_buf.writeUInt8 (0x40, _.cache_buf_pos);
         }
         return;
     }
     // Alternative: count number of bits and select by that
-    if (num >= -0x00000040 && num < 0x00000040) {
+    if (num >= -0x0000003e && num < 0x00000040) {
         _.cache_buf_pos = _.cache_buf.writeUInt8 (num       & 0x7f,        _.cache_buf_pos);
     } else if (num >= -0x00002000 && num < 0x00002000) {
         _.cache_buf_pos = _.cache_buf.writeUInt8 ((num>>7)  & 0x7f | 0x80, _.cache_buf_pos);
@@ -275,37 +275,34 @@ function buf_read_string () {
 }
 // Mid level: read unsigned variable sized int; does not check buf availability
 function buf_read_uvs () {
-    var test = _.cache_buf.readUInt16BE(_.cache_buf_pos);
-    if (test === 0x8000) {
-        _.cache_buf_pos += 2;
+    var byte = _.cache_buf.readUInt8(_.cache_buf_pos);
+    if (byte === 0x7e) {
+        _.cache_buf_pos++;
         return undefined;
-    } else if (test === 0x8001) {
-        _.cache_buf_pos += 2;
+    } else if (byte === 0x7f) {
+        _.cache_buf_pos++;
         return null;
     }
     var num = 0;
     for (var i = 0; i < 8; i++) {
-        var byte = _.cache_buf.readUInt8 (_.cache_buf_pos++);
+        byte = _.cache_buf.readUInt8 (_.cache_buf_pos++);
         if (! (byte & 0x80)) {
             return num + byte;
         }
         num = (num + (byte & 0x7f)) * 0x80;
     }
     // Would only work correctly with BigInts for >53bits
-    var byte = _.cache_buf.readUInt8 (_.cache_buf_pos++);
+    byte = _.cache_buf.readUInt8 (_.cache_buf_pos++);
     return num*2 + byte;
 }
 // Mid level: read signed variable sized int; does not check buf availability
 function buf_read_svs () {
-    var test = _.cache_buf.readUInt16BE(_.cache_buf_pos);
-    if (test === 0x8000) {
-        _.cache_buf_pos += 2;
+    var byte = _.cache_buf.readUInt8(_.cache_buf_pos++);
+    if (byte === 0x41) {
         return undefined;
-    } else if (test === 0x8001) {
-        _.cache_buf_pos += 2;
+    } else if (byte === 0x40) {
         return null;
     }
-    var byte   = _.cache_buf.readUInt8 (_.cache_buf_pos++);
     var negate = byte & 0x40;
     var topbit = byte & 0x80;
     var num = (negate ? ~byte : byte) & 0x3f;
@@ -323,7 +320,7 @@ function buf_read_svs () {
         num *= 0x80;
     }
     // Would only work correctly with BigInts for >53bits
-    var byte = _.cache_buf.readUInt8 (_.cache_buf_pos++);
+    byte = _.cache_buf.readUInt8 (_.cache_buf_pos++);
     num = num * 2 + ((negate ? ~byte : byte) & 0xff);
     return negate ? -num-1 : num ;
 }

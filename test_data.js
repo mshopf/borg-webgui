@@ -4,7 +4,12 @@ const data     = require ('./data');
 
 
 function hex(v) {
-    const s=v.toString(16);
+    var s;
+    if (typeof(v) === 'number') {
+        s=v.toString(16);
+    } else {
+        s=''+v;
+    }
     return ('________________'.slice (0, s.length <= 16 ? 16-s.length : 0)) + s;
 }
 function print_buf(n) {
@@ -28,6 +33,11 @@ async function test () {
     data.cache_buf_pos = 0;
     data.buf_write_buf (data.init_tag_buf);
     data.cache_buf_pos = 0x10;
+
+    data.buf_write_uvs (undefined);
+    data.buf_write_uvs (null);
+    data.buf_write_svs (undefined);
+    data.buf_write_svs (null);
 
     for (var i = 2; i < (2**64); i*=2) {
         data.buf_write_uvs (i-1);
@@ -86,6 +96,13 @@ async function test () {
     await data.buf_file_offset (fh, 0x10);
     await data.buf_check_avail (fh, data.VS_LENGTH_MAX * (9*64 + 3*0x1000 + 3));
 
+    var str = '';
+    str += buf_test_compare (data.buf_read_uvs (), undefined);
+    str += buf_test_compare (data.buf_read_uvs (), null);
+    str += buf_test_compare (data.buf_read_svs (), undefined);
+    str += buf_test_compare (data.buf_read_svs (), null);
+    console.log (str);
+
     for (var i = 2; i < (2**64); i*=2) {
         var str = '';
         str += buf_test_compare (data.buf_read_uvs (), i-1);
@@ -116,6 +133,7 @@ async function test () {
         buf_test_compare (data.buf_read_svs (), i);
         buf_test_compare (data.buf_read_svs (), -i);
     }
+    console.log ('0-0x1000, +0-0x1000, -0-0x1000');
 
     // All 3 fail due to precision errors - need BigInt reading
     // buf_test_compare (data.buf_read_uvs (), 0xffffffffffffffffn);

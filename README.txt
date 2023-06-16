@@ -28,26 +28,25 @@ Object: a "Archives" - Array of archive names TBC
 File data structure
 ===================
 
-TODO: undefined, null
-
 Numbers written as variably sized integer
-This scheme does not create binary patters starting with 0x80 (and 0xff for signed values).
-Therefore 0x80xx is reserved for special 'numbers':
-- 0x8000 undefined
-- 0x8001 null
-- 0x8002 NaN  (TODO)
+This scheme does not create binary patters starting with 0x80 (and 0xff for signed values). Except for
+-  0x7e and  0x7f  in uvs: 0x807e and 0x807f
+- -0x3f and -0x40  in svs: 0xff41 and 0xff40
+These numbers are reserved for specials:
+- 0x7e (uvs) 0x41 (svs) : undefined
+- 0x7f (uvs) 0x40 (svs) : null
 
 NOTE: Numbers > 52bit currently not represented exactly on reading
 Numbers to be delivered as BigInts to be written exactly
 Variable sized integer (uvs (unsigned)) - big endian
-- 0x00000000-0x0000007f   - 0xxxxxxx
-- 0x00000080-0x00003fff   - 1xxxxxxx (hi 7 bits)  0xxxxxxx (lo 7 bits)
+- 0x00000000-0x0000007d   - 0xxxxxxx
+- 0x0000007e-0x00003fff   - 1xxxxxxx (hi 7 bits)  0xxxxxxx (lo 7 bits)
 - 0x00004000-0x001fffff   - 1xxxxxxx (hi 7 bits)  1xxxxxxx  0xxxxxxx (lo 7 bits)
 [...]
 - 0x0002000000000000-0x00ffffffffffffff   - hi-to-lo 7x 1xxxxxxx  ...  0xxxxxxx (lo 7 bits)
 - 0x0100000000000000-0xffffffffffffffff   - hi-to-lo 8x 1xxxxxxx  ...  xxxxxxxx (lo 8(!) bits)
 Variable sized integer (svs (signed))
-- -0x00000040-0x0000003f   - 0sxxxxxx
+- -0x0000003e-0x0000003f   - 0sxxxxxx
 - -0x00002000-0x00001fff   - 1sxxxxxx (hi 7 bits)  0xxxxxxx (lo 7 bits)
 - -0x00100000-0x000fffff   - 1sxxxxxx (hi 7 bits)  1xxxxxxx  0xxxxxxx (lo 7 bits)
 [...]
