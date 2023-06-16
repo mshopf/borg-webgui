@@ -31,6 +31,11 @@ File data structure
 TODO: undefined, null
 
 Numbers written as variably sized integer
+This scheme does not create binary patters starting with 0x80 (and 0xff for signed values).
+Therefore 0x80xx is reserved for special 'numbers':
+- 0x8000 undefined
+- 0x8001 null
+- 0x8002 NaN  (TODO)
 
 NOTE: Numbers > 52bit currently not represented exactly on reading
 Numbers to be delivered as BigInts to be written exactly

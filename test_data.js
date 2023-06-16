@@ -83,7 +83,7 @@ async function test () {
     var initial_tree_offset = data.buf_read_uvs ();
     console.log (initial_tree_offset.toString (16)+' = 0x1234567');
 
-    await data.read_data (fh, 0x10);
+    await data.buf_file_offset (fh, 0x10);
     await data.buf_check_avail (fh, data.VS_LENGTH_MAX * (9*64 + 3*0x1000 + 3));
 
     for (var i = 2; i < (2**64); i*=2) {

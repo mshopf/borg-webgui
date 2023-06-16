@@ -11,16 +11,16 @@ var   file_currentoffset = 0;
 
 
 // Low level: write buffer to stream, await if clogged
-async function write_buffer_to_stream (st, buf, len=undefined) {
+/*async function write_buffer_to_stream (st, buf, len=undefined) {
     const chunk = len === undefined ? buf : buf.subarray (0, len);
     _.file_currentoffset += chunk.length;
     if (st.write (chunk)) {
         return;
     }
     // Buffer full - wait for space
-    console.log ('write buffer full');
+    console.error ('write buffer full');
     await new Promise ((resolve, reject) => st.on ('drain', resolve));
-}
+}*/
 
 //
 // WRITE INTERFACE
@@ -31,8 +31,15 @@ async function buf_check_flush (st, required) {
     if (_.cache_buf_pos + required <= _.CACHE_BUF_MAX) {
         return;
     }
-    await write_buffer_to_stream (st, _.cache_buf, _.cache_buf_pos);
+    const chunk = _.cache_buf.subarray (0, _.cache_buf_pos);
+    _.file_currentoffset += _.cache_buf_pos;
     _.cache_buf_pos = 0;
+    if (st.write (chunk)) {
+        return;
+    }
+    // Buffer full - wait for space
+    console.error ('write buffer full');
+    await new Promise ((resolve, reject) => st.on ('drain', resolve));
 }
 // Mid level: write (part of) buffer to cache
 function buf_write_buf (buf, offset=0, len=buf.length-offset) {
@@ -41,6 +48,9 @@ function buf_write_buf (buf, offset=0, len=buf.length-offset) {
 }
 // Mid level: write string to cache
 function buf_write_string (str) {
+    if (str == null) {
+        return buf_write_uvs (str);
+    }
     buf_write_uvs (Buffer.byteLength (str));
     _.cache_buf_pos += _.cache_buf.write (str, _.cache_buf_pos);
 }
@@ -48,6 +58,14 @@ function buf_write_string (str) {
 // num > 2**53 only works with BigInts
 // num has to be POSITIVE
 function buf_write_uvs (num) {
+    if (num == null) {  // || undefined
+        if (num === undefined) {
+            _.cache_buf_pos = _.cache_buf.writeUInt16BE (0x8000, _.cache_buf_pos);
+        } else {
+            _.cache_buf_pos = _.cache_buf.writeUInt16BE (0x8001, _.cache_buf_pos);
+        }
+        return;
+    }
     // Alternative: count number of bits and select by that
     if (num < 0x00000080) {
         _.cache_buf_pos = _.cache_buf.writeUInt8 (num       & 0x7f,        _.cache_buf_pos);
@@ -114,6 +132,14 @@ function buf_write_uvs (num) {
 // Mid level: write signed variable sized int to cache
 // |num| > 2**52 only works with BigInts
 function buf_write_svs (num) {
+    if (num == null) {  // || undefined
+        if (num === undefined) {
+            _.cache_buf_pos = _.cache_buf.writeUInt16BE (0x8000, _.cache_buf_pos);
+        } else {
+            _.cache_buf_pos = _.cache_buf.writeUInt16BE (0x8001, _.cache_buf_pos);
+        }
+        return;
+    }
     // Alternative: count number of bits and select by that
     if (num >= -0x00000040 && num < 0x00000040) {
         _.cache_buf_pos = _.cache_buf.writeUInt8 (num       & 0x7f,        _.cache_buf_pos);
@@ -177,30 +203,39 @@ function buf_write_svs (num) {
     }
 }
 
+// Hi level: read list of archives
+async function write_archives (st, archives) {
+    await buf_check_flush (st, _.VS_LENGTH_MAX + archives.length * (_.VS_LENGTH_MAX + _.PATH_LENGTH_MAX));
+    buf_write_uvs (archives.length);
+    for (const e of archives) {
+        buf_write_string (e);
+    }
+}
+
 // Hi level: write single tree element to cache
-async function write_data (st, tree) {
-    tree.o = _.file_currentoffset;
-    // .s .t .l.length .a.length .c.length/null + a*svs + .l
-    await buf_check_flush (st, (5+tree.a.length) * _.VS_LENGTH_MAX + _.PATH_LENGTH_MAX);
-    buf_write_uvs    (st, tree.s);
-    buf_write_uvs    (st, tree.t);
-    buf_write_string (st, tree.l);
-    buf_write_uvs    (st, tree.a.length);
+async function write_tree (st, tree) {
+    tree.o = _.file_currentoffset + _.cache_buf_pos;
+    // .s .t.length .l.length .a.length .c.length/null + a*svs + .t + .t
+    await buf_check_flush (st, (5+tree.a.length) * _.VS_LENGTH_MAX + 2 * _.PATH_LENGTH_MAX);
+    buf_write_uvs    (tree.s);
+    buf_write_string (tree.t);
+    buf_write_string (tree.l);
+    buf_write_uvs    (tree.a.length);
     for (const e of tree.a) {
-        buf_write_svs (st, e);
+        buf_write_svs (e);
     }
     if (tree.c === undefined) {
-        buf_write_uvs (st, 0);
+        buf_write_uvs (0);
     } else {
-        buf_write_uvs (st, tree.c.length+1);        // 0 is reserved for 'no array'
+        buf_write_uvs (Object.keys (tree.c) .length + 1);        // 0 is reserved for 'no array' (one byte less than null)
         for (const i in tree.c) {
             if (tree.c[i].o === undefined) {
                 console.error ('undefined .o');
             }
             // i.length .o
             await buf_check_flush (st, 2 * _.VS_LENGTH_MAX + _.FILE_LENGTH_MAX);
-            buf_write_string (st, i);
-            buf_write_uvs    (st, tree.c[i].o);
+            buf_write_string (i);
+            buf_write_uvs    (tree.c[i].o);
         }
     }
 }
@@ -209,16 +244,18 @@ async function write_data (st, tree) {
 // READ INTERFACE
 //
 
-async function read_data (fd, offset) {
-    await fd.read (_.cache_buf, 0, _.DEFAULT_READ_SIZE, offset);
+async function buf_file_offset (fh, offset) {
+    if (offset == null) {
+        offset = _.file_currentoffset + _.cache_buf_pos;
+    }
+    await fh.read (_.cache_buf, 0, _.DEFAULT_READ_SIZE, offset);
     _.file_currentoffset = offset;
     _.cache_buf_pos  = 0;
     _.cache_buf_read = _.DEFAULT_READ_SIZE;
 }
-async function buf_check_avail (fd, required) {
+async function buf_check_avail (fh, required) {
     while (_.cache_buf_pos + required > _.cache_buf_read) {
-        console.log ("reading "+_.DEFAULT_READ_SIZE+" bytes");
-        await fd.read (_.cache_buf, _.cache_buf_read, _.DEFAULT_READ_SIZE, _.file_currentoffset + _.cache_buf_read);
+        await fh.read (_.cache_buf, _.cache_buf_read, _.DEFAULT_READ_SIZE, _.file_currentoffset + _.cache_buf_read);
         _.cache_buf_read += _.DEFAULT_READ_SIZE;
     }
 }
@@ -226,6 +263,9 @@ async function buf_check_avail (fd, required) {
 // Mid level: read string; only checks buf availability of chars
 function buf_read_string () {
     const len = buf_read_uvs ();
+    if (len == null) {
+        return len;
+    }
     if (_.cache_buf_pos + len > _.cache_buf_read) {
         return null;
     }
@@ -235,6 +275,14 @@ function buf_read_string () {
 }
 // Mid level: read unsigned variable sized int; does not check buf availability
 function buf_read_uvs () {
+    var test = _.cache_buf.readUInt16BE(_.cache_buf_pos);
+    if (test === 0x8000) {
+        _.cache_buf_pos += 2;
+        return undefined;
+    } else if (test === 0x8001) {
+        _.cache_buf_pos += 2;
+        return null;
+    }
     var num = 0;
     for (var i = 0; i < 8; i++) {
         var byte = _.cache_buf.readUInt8 (_.cache_buf_pos++);
@@ -249,6 +297,14 @@ function buf_read_uvs () {
 }
 // Mid level: read signed variable sized int; does not check buf availability
 function buf_read_svs () {
+    var test = _.cache_buf.readUInt16BE(_.cache_buf_pos);
+    if (test === 0x8000) {
+        _.cache_buf_pos += 2;
+        return undefined;
+    } else if (test === 0x8001) {
+        _.cache_buf_pos += 2;
+        return null;
+    }
     var byte   = _.cache_buf.readUInt8 (_.cache_buf_pos++);
     var negate = byte & 0x40;
     var topbit = byte & 0x80;
@@ -272,10 +328,45 @@ function buf_read_svs () {
     return negate ? -num-1 : num ;
 }
 
+// Hi level: read list of archives
+async function read_archives (fh, offset) {
+    await buf_file_offset (fh, offset);
+    var len = buf_read_uvs();
+    await buf_check_avail (fh, _.cache_buf_read + len * (_.VS_LENGTH_MAX + _.FILE_LENGTH_MAX));
+    var ar = [];
+    for (var i = 0; i < len; i++) {
+        ar.push (buf_read_string());
+    }
+    return ar;
+}
+
+// Hi level: read single tree element to cache
+async function read_tree (fd, offset) {
+    await buf_file_offset (fd, offset);
+    var t = { a: [] };
+    t.s = buf_read_uvs();
+    t.t = buf_read_string();
+    t.l = buf_read_string();
+    var len = buf_read_uvs();
+    for (var i = 0; i < len; i++) {
+        t.a[i] = buf_read_svs();
+    }
+    len = buf_read_uvs();
+    if (len > 0) {
+        await buf_check_avail (fd, _.cache_buf_read + len * (2 * _.VS_LENGTH_MAX + _.FILE_LENGTH_MAX));
+        t.c = {};
+        for (var i = 1; i < len; i++) {
+            var str = buf_read_string();
+            t.c[str] = { o: buf_read_uvs() };
+        }
+    }
+    return t;
+}
+
 var _ = {
     VS_LENGTH_MAX, DEFAULT_READ_SIZE, FILE_LENGTH_MAX, PATH_LENGTH_MAX, CACHE_BUF_MAX, cache_buf, init_tag_buf, cache_buf_pos, cache_buf_read, file_currentoffset,
-    buf_check_flush, buf_write_buf, buf_write_string, buf_write_uvs, buf_write_svs, write_data,
-    read_data, buf_check_avail, buf_read_string, buf_read_uvs, buf_read_svs, // read_data
+    buf_check_flush, buf_write_buf, buf_write_string, buf_write_uvs, buf_write_svs, write_archives, write_tree,
+    buf_file_offset, buf_check_avail, buf_read_string, buf_read_uvs, buf_read_svs, read_archives, read_tree,
 };
 module.exports = _;
 
