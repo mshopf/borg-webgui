@@ -340,8 +340,8 @@ async function read_archives (fh, offset) {
 }
 
 // Hi level: read single tree element to cache
-async function read_tree (fd, offset) {
-    await buf_file_offset (fd, offset);
+async function read_tree (fh, offset) {
+    await buf_file_offset (fh, offset);
     var t = { a: [] };
     t.s = buf_read_uvs();
     t.t = buf_read_uvs();
@@ -352,7 +352,7 @@ async function read_tree (fd, offset) {
     }
     len = buf_read_uvs();
     if (len > 0) {
-        await buf_check_avail (fd, _.cache_buf_read + len * (2 * _.VS_LENGTH_MAX + _.FILE_LENGTH_MAX));
+        await buf_check_avail (fh, _.cache_buf_read + len * (2 * _.VS_LENGTH_MAX + _.FILE_LENGTH_MAX));
         t.c = {};
         for (var i = 1; i < len; i++) {
             var str = buf_read_string();
