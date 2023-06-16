@@ -176,7 +176,7 @@ async function read_tree (file, archive) {
             stream = stream.pipe (bz2());
         }
     } else {
-        const child = cp.spawn ('borg', ['list', '--format', '"{type} {path} {size} {isomtime}"', '--json-lines', config.borg_repo+'::'+file]);
+        child = cp.spawn ('borg', ['list', '--format', '"{type} {path} {size} {isomtime}"', '--json-lines', config.borg_repo+'::'+file]);
         stream = child.stdout;
     }
 
@@ -414,7 +414,8 @@ async function main () {
     console.error ('done');
 };
 
-main();
+main().catch ((e) => console.error ('* '+e.stack));
+
 
 // Data structure:
 // Object: a "Archives" - Array of archive names TBC
