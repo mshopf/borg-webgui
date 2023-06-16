@@ -1,9 +1,13 @@
-const fs  = require ('fs');
-const bz2 = require ('unbzip2-stream');
+const fs       = require ('fs');
+const bz2      = require ('unbzip2-stream');
 const readline = require ('readline');
-const cp = require ('child_process');
-const config  = require ('./config');
+const cp       = require ('child_process');
+const fs_p     = require ('node:fs').promises;
+const stream_p = require ('node:stream').promises;
+const config   = require ('./config');
+const data     = require ('./data');
 
+const OUTPUT_FILE = 'borg-backup-data-tree.bin';
 
 // walk tree structure
 // unused, just kept for reference purposes
@@ -230,6 +234,27 @@ async function read_tree (file, archive) {
     return tree;
 }
 
+async function read_full_bin_tree (fh, offset) {
+    var tree = await data.read_tree (fh, offset);
+    if (tree.c !== undefined) {
+        for (var e in tree.c) {
+            // currently replaces data - makes lots of unnecessary junk objects
+            tree.c[e] = await read_full_bin_tree (fh, tree.c[e].o);
+        }
+    }
+    return tree;
+}
+
+async function write_full_bin_tree (st, tree) {
+    // Have to write depth first, to know offsets of children
+    if (tree.c !== undefined) {
+        for (var e in tree.c) {
+            await write_full_bin_tree (st, tree.c[e]);
+        }
+    }
+    await data.write_tree (st, tree);
+}
+
 var archives, tree, last_tree, last_path;
 
 function streamToString (stream) {
@@ -252,8 +277,8 @@ async function main () {
 
     if (datafile == null || datafile === '') {
         // TODO: loop over all data in config.js
-        console.error ('Usage: cmd datafile.json[.bz2]|- [/regex] (reads in borg list and determines added/removed archives)');
-        console.error ('Usage: cmd datafile.json[.bz2]|- [[-|+]archive] [...]');
+        console.error ('Usage: cmd datafile.[json[.bz2]|.bin]|- [/regex] (reads in borg list and determines added/removed archives)');
+        console.error ('Usage: cmd datafile.[json[.bz2]|.bin]|- [[-|+]archive] [...]');
         return;
     }
     if (datafile === '-') {
@@ -265,21 +290,40 @@ async function main () {
     } else {
         console.error ('Reading original data '+datafile);
         try {
-            var stream = fs.createReadStream (datafile);
-            if (datafile.slice (-4) === ".bz2") {
-                stream = stream.pipe (bz2());
+            if (datafile.slice (-4) === ".bin") {
+                var fh = await fs_p.open (datafile, 'r');
+                // direct access, thus no stream
+
+                // Read start tag and initial offset
+                await fh.read (data.cache_buf, 0, 12, 0);
+                if (data.init_tag_buf.compare (data.cache_buf, 0, 4) != 0) {
+                    throw Error ('not a bOt0 file');
+                }
+                data.cache_buf_pos = 4;
+                var initial_tree_offset = data.buf_read_uvs ();
+
+                archives = await data.read_archives (fh, 0x10);
+                tree     = await read_full_bin_tree (fh, initial_tree_offset);
+
+                await fh.close ();
+
+            } else {
+                var stream = fs.createReadStream (datafile);
+                if (datafile.slice (-4) === ".bz2") {
+                    stream = stream.pipe (bz2());
+                }
+                var txt = await streamToString (stream);
+                [ archives, tree ] = JSON.parse (txt);
             }
-            var data = await streamToString (stream);
-            [ archives, tree ] = JSON.parse (data);
             last_tree = tree;
             last_path = '';
         } catch (e) {
-            console.error ('Reading data: '+e.message);
+            console.error ('Reading data: '+e.stack);
             return;
         }
     }
 
-    if (files[0][0] === '/' && files.length === 1) {
+    if (files[0] && files[0][0] === '/' && files.length === 1) {
         console.error ('reading borg archive list');
         const filter = new RegExp (files[0].slice(1));
         const json = JSON.parse (await call_command ('borg', ['list', '--json', config.borg_repo]));
@@ -342,7 +386,33 @@ async function main () {
 
     consolidate_dirs (tree);
     //walk_tree (tree, "");
-    console.log (JSON.stringify ([archives, tree]));
+    //console.log (JSON.stringify ([archives, tree], undefined, 4));
+
+    var fh = await fs_p.open (OUTPUT_FILE, 'w', 0o644);
+    var st = fh.createWriteStream ();
+    data.file_currentoffset = 0;
+    st.on ('error', (e) => {throw e});
+
+    data.cache_buf_pos = 0x10;
+    await data.write_archives (st, archives);
+
+    await write_full_bin_tree (st, tree);
+
+    // flush write buffer unconditionally
+    await data.buf_check_flush (st, data.CACHE_BUF_MAX+1);
+    st.end ();
+    await stream_p.finished (st);
+
+    // Create buffer object with tag and offset to main data structure
+    data.cache_buf_pos = 0;
+    data.buf_write_buf (data.init_tag_buf);
+    data.buf_write_uvs (tree.o);
+    // Write to slot at beginning of file
+    var fh = await fs_p.open (OUTPUT_FILE, 'r+', 0o644);
+    await fh.write (data.cache_buf, 0, data.VS_LENGTH_MAX+4, 0);
+    await fh.close ();
+
+    console.error ('done');
 };
 
 main();
@@ -355,3 +425,4 @@ main();
     //{"type": "d", "mode": "drwxr-xr-x", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig", "healthy": true, "source": "", "linktarget": "", "flags": 0, "isomtime": "2022-01-24T16:33:10.461280", "size": 0}
     //{"type": "-", "mode": "-rw-r--r--", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig/64bit_strstr_via_64bit_strstr_sse2_unaligned", "healthy": true, "source": "", "linktarget": "", "flags": 0, "isomtime": "2021-11-15T19:29:28.000000", "size": 0}
     //{"type": "l", "mode": "lrwxrwxrwx", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig/grub", "healthy": true, "source": "../default/grub", "linktarget": "../default/grub", "flags": 0, "isomtime": "2022-01-12T16:23:39.000000", "size": 15}
+
