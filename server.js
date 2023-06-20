@@ -243,6 +243,9 @@ async function run_queue () {
             }
         }
     }
+    if (queue.length > config.max_status_entries) {
+        queue.splice (0, queue.length-config.max_status_entries);
+    }
     console.log ('Memory Usage: '+ process.memoryUsage().heapUsed/(1024*1024) + ' MB');
 }
 
