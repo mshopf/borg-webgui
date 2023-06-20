@@ -4,8 +4,8 @@ const readline = require ('readline');
 const cp       = require ('child_process');
 const fs_p     = require ('node:fs').promises;
 const stream_p = require ('node:stream').promises;
-const config   = require ('./config');
 const data     = require ('./data');
+const config   = eval ('('+fs.readFileSync ('./config.js', 'utf8')+')');
 
 const OUTPUT_FILE = 'borg-backup-data-tree.bin';
 
@@ -425,4 +425,3 @@ main().catch ((e) => console.error ('* '+e.stack));
     //{"type": "d", "mode": "drwxr-xr-x", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig", "healthy": true, "source": "", "linktarget": "", "flags": 0, "isomtime": "2022-01-24T16:33:10.461280", "size": 0}
     //{"type": "-", "mode": "-rw-r--r--", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig/64bit_strstr_via_64bit_strstr_sse2_unaligned", "healthy": true, "source": "", "linktarget": "", "flags": 0, "isomtime": "2021-11-15T19:29:28.000000", "size": 0}
     //{"type": "l", "mode": "lrwxrwxrwx", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig/grub", "healthy": true, "source": "../default/grub", "linktarget": "../default/grub", "flags": 0, "isomtime": "2022-01-12T16:23:39.000000", "size": 15}
-
