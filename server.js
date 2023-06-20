@@ -9,10 +9,33 @@ const readline = require ('readline');
 const crypto   = require ('crypto');
 const argon2   = require ('argon2');
 const data     = require ('./data');
-const config   = require ('./config');
 
 const app      = express ();
 const trees    = {};
+
+var   config   = eval ('('+fs.readFileSync ('./config.js', 'utf8')+')');
+
+var watching_config = false, watcher_config;
+function setup_watch_config () {
+    watcher_config?.close ();
+    watcher_config = fs.watch ('./config.js', { persistant: false }, load_config);
+}
+async function load_config () {
+    if (watching_borg_log) {
+        return;
+    }
+    watching_borg_log = true;
+    try {
+        const str = await fs_p.readFile ('./config.js', 'utf8');
+        config = eval ('('+str+')');
+        console.log ('re-loaded config ', config);
+        setup_watch_config ();
+    } catch (e) {
+        setTimeout (load_config, 5000);
+    }
+    watching_borg_log = false;
+}
+setup_watch_config ();
 
 
 function streamToString (stream) {
