@@ -13,6 +13,9 @@ window.onload = fetch_status;
 setInterval (fetch_status, 5000);
 
 function escapeHtml(x) {
+    if (x == null) {
+        return '';
+    }
     return x .replaceAll ('&', '&amp;') .replaceAll ('<', '&lt;') .replaceAll ('>', '&gt;');
 }
 function escapeQuery(x) {
@@ -40,7 +43,11 @@ async function update_state (state) {
             info += ' - Finished ' + (new Date (e.tfinish) .toLocaleTimeString());
         }
 
-        html += `<li><div class="entry ${escapeHtml(e.state)}">${info}</a></div><div class=path><div><a href="log/${escapeHtml(e.handle)}.log"><b>${escapeHtml(e.handle)}</b></a> (${escapeHtml(e.archive)}): ${escapeHtml(e.fullinfo)}</div></div></li>`;
+        html += `<li><div class="entry ${escapeHtml(e.state)}">${info}</div><div class=path><div>`;
+        if (e.handle != null) {
+            html += `<a href="log/${escapeHtml(e.handle)}.log"><b>${escapeHtml(e.handle)}</b></a> `;
+        }
+        html += `(${escapeHtml(e.archive)}): ${escapeHtml(e.short)}</div></div></li>`;
     }
     if (state.length == 0) {
         html += '<li>None</li>'

@@ -37,6 +37,52 @@ async function load_config () {
 }
 setup_watch_config ();
 
+var last_borg_log_position = 0, watching_borg_log = 1, watcher_borg_log;
+if (config.borg_backup_log) {
+    setup_read_borg_log ();
+    continue_read_borg_log ();
+}
+function setup_read_borg_log () {
+    watcher_borg_log?.close ();
+    watcher_borg_log = fs.watch (config.borg_backup_log, { persistant: false }, (evt) => {
+        console.log ('borg_backup_log watch @'+evt);
+        // file renamed / overwritten, read from start, restart watcher
+        if (evt === 'rename') {
+            last_borg_log_position = 0;
+            setup_read_borg_log ();
+        }
+        // we can get multiple events for one change. due to promises these might run in "parallel"
+        if (++watching_borg_log === 1) {
+            continue_read_borg_log ();
+        }
+    });
+}
+async function continue_read_borg_log () {
+    console.log ('* continue_read_borg_log');
+    try {
+        do {
+            const fh = await fs_p.open (config.borg_backup_log);
+            const rl = fh.readLines ({ start: last_borg_log_position });
+            last_borg_log_position = (await fh.stat()).size;
+            for await (const line of rl) {
+                const obj = { handle: null, state: 'backup', archive: 'system', short: 'backup done', info: line, tschedule: null, texecute: null, tfinish: null };
+                if (line.match (/ERR/)) {
+                    obj.state = 'err';
+                    obj.short = 'backup error';
+                }
+                queue.push (obj);
+            }
+            await rl.close ();
+            await fh.close ();
+        } while (--watching_borg_log > 0);
+    } catch (e) {
+        setTimeout (continue_read_borg_log, 5000);
+    }
+    // This *might* grow to large for a short moment, but who cares...
+    if (queue.length > config.max_status_entries) {
+        queue.splice (0, queue.length-config.max_status_entries);
+    }
+}
 
 function streamToString (stream) {
     const chunks = [];
@@ -118,7 +164,7 @@ app.get ('/api/status', function (req, res) {
     for (const e in queue) {
         response.state[e]  = { handle: queue[e].handle, state: queue[e].state, info: queue[e].info,
                                tschedule: queue[e].tschedule, texecute: queue[e].texecute, tfinish: queue[e].tfinish,
-                               fullinfo: queue[e].firstfullpath+'...', archive: queue[e].archive };
+                               short: queue[e].short, archive: queue[e].archive };
     }
     res.json (response);
 });
@@ -218,7 +264,7 @@ app.post ('/api/restore/:backup', function (req, res) {
 
     for (const e of entry.archives) {
         if (e === ar) {
-            const handle = queue_request ({ backup: req.params.backup, archive: ar, list, firstfullpath: list[0] });
+            const handle = queue_request ({ backup: req.params.backup, archive: ar, list, short: list[0].substring(0,20)+'...' });
             return res .json (handle);
         }
     }
