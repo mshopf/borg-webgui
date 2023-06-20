@@ -339,13 +339,17 @@ async function initiate_restore () {
         const list = [];
         find_end_paths (tree, '', list);
         obj = { archive: name, list: list.sort() };
-        // recurse
-        const response = await fetch ('/api/restore/' + backupurl,
-                                      {   method: 'POST',
-                                          headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                                          body: JSON.stringify (obj)
-                                      });
-        confirm ('Handle for your request: ' + (await response .json ()) + ' - This process will take some time!');
+        try {
+            const response = await fetch ('/api/restore/' + backupurl,
+                                          {   method: 'POST',
+                                              headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                                              body: JSON.stringify (obj)
+                                          });
+            await response.json();
+            history.back();
+        } catch (e) {
+            confirm ('Error: ' + e.message);
+        }
     }
 }
 

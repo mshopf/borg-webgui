@@ -2,14 +2,14 @@ const html_root  = document.getElementById ('root');
 const html_state = document.getElementById ('state');
 
 function fetch_status () {
-    fetch ('/api/status', { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }})
+    fetch ('/api/status', { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }, cache: "no-store"})
     .then (res => res.json())
     .then (json => {
         update_backups (json.backups);
         update_state   (json.state?.reverse());
     });
 }
-fetch_status();
+window.onload = fetch_status;
 setInterval (fetch_status, 5000);
 
 function escapeHtml(x) {
