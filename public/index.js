@@ -40,7 +40,7 @@ async function update_state (state) {
             info += ' - Finished ' + (new Date (e.tfinish) .toLocaleTimeString());
         }
 
-        html += `<li><div class="entry ${escapeHtml(e.state)}">${info}</div><div class=path><b>${escapeHtml(e.handle)}</b> (${escapeHtml(e.archive)}): ${escapeHtml(e.fullinfo)}</div></li>`;
+        html += `<li><div class="entry ${escapeHtml(e.state)}">${info}</a></div><div class=path><div><a href="log/${escapeHtml(e.handle)}.log"><b>${escapeHtml(e.handle)}</b></a> (${escapeHtml(e.archive)}): ${escapeHtml(e.fullinfo)}</div></div></li>`;
     }
     if (state.length == 0) {
         html += '<li>None</li>'

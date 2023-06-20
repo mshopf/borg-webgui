@@ -83,6 +83,8 @@ openAll ();
 app.use (express.json ());
 app.use (express.urlencoded ({ extended: true }));
 app.use (express.static (path.join (__dirname, 'public')));
+app.use ('/log/', express.static (path.join (__dirname, 'log')));
+express.static.mime.define ({'text/plain': ['log']});
 
 app.get ('/api/status', function (req, res) {
     console.log (`* api/status`);
