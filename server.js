@@ -85,6 +85,7 @@ app.use (express.urlencoded ({ extended: true }));
 app.use (express.static (path.join (__dirname, 'public')));
 
 app.get ('/api/status', function (req, res) {
+    console.log (`* api/status`);
     var response = { backups: {}, state: [] };
     for (const e in trees) {
         response.backups[e] = trees[e].archives.length -1;
@@ -92,7 +93,7 @@ app.get ('/api/status', function (req, res) {
     for (const e in queue) {
         response.state[e]  = { handle: queue[e].handle, state: queue[e].state, info: queue[e].info,
                                tschedule: queue[e].tschedule, texecute: queue[e].texecute, tfinish: queue[e].tfinish,
-                               firstfullpath: queue[e].firstfullpath, archive: queue[e].archive };
+                               fullinfo: queue[e].firstfullpath+'...', archive: queue[e].archive };
     }
     res.json (response);
 });
@@ -178,6 +179,7 @@ app.get ('/api/data/:backup/:path(*)', async function (req, res) {
 });
 
 app.post ('/api/restore/:backup', function (req, res) {
+    console.log (`* api/restore ${req.params.backup}`);
     const ar   = req.body.archive;
     const list = req.body.list;
     if (list === undefined || list.length == 0) {
@@ -236,10 +238,10 @@ async function run_queue () {
                 q.tfinish  = Date.now();
                 queue_active--;
                 console.log ('Finished restore process '+q.handle+' - '+JSON.stringify (result));
-                console.log ('Memory Usage: '+ process.memoryUsage().heapUsed/(1024*1024) + ' MB');
             }
         }
     }
+    console.log ('Memory Usage: '+ process.memoryUsage().heapUsed/(1024*1024) + ' MB');
 }
 
 async function execute_borg_extract (q) {

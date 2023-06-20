@@ -1,13 +1,12 @@
-var backups, state;
+const html_root  = document.getElementById ('root');
+const html_state = document.getElementById ('state');
 
 function fetch_status () {
     fetch ('/api/status', { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }})
     .then (res => res.json())
     .then (json => {
-        backups = json.backups;
-        state   = json.state;
-        update_backups (document.getElementById ('root'));
-        update_state   (document.getElementById ('state'));
+        update_backups (json.backups);
+        update_state   (json.state?.reverse());
     });
 }
 fetch_status();
@@ -20,28 +19,31 @@ function escapeQuery(x) {
     return encodeURIComponent (x) .replaceAll ('%20', '+');
 }
 
-async function update_backups (root) {
+async function update_backups (backups) {
     var html = '<ul>';
     for (const e in backups) {
         html += `<li><a href="listing.html?backup=${escapeQuery(e)}"><div class=entry>${escapeHtml(''+backups[e])} Archives</div><div class=path><b>${escapeHtml(e)}</b></div></a></li>`;
     }
-    root.innerHTML = html+'</ul>';
+    html_root.innerHTML = html+'</ul>';
 }
 
-async function update_state (root) {
+async function update_state (state) {
     var html = '<ul>';
     for (const e of state) {
-        var info = escapeHtml (e.info) + ' - Scheduled ' + (new Date (e.tschedule) .toLocaleString());
+        var info = escapeHtml (e.info);
+        if (e.texecute) {
+            info += ' - Started ' + (new Date (e.texecute) .toLocaleTimeString());
+        } else if (e.tschedule) {
+            info += ' - Scheduled ' + (new Date (e.tschedule) .toLocaleString());
+        }
         if (e.tfinish) {
             info += ' - Finished ' + (new Date (e.tfinish) .toLocaleTimeString());
-        } else if (e.texecute) {
-            info += ' - Started ' + (new Date (e.texecute) .toLocaleTimeString());
         }
 
-        html += `<li><div class="entry ${escapeHtml(e.state)}">${info}</div><div class=path><b>${escapeHtml(e.handle)}</b> from ${escapeHtml(e.archive)}: ${escapeHtml(e.firstfullpath)}...</div></li>`;
+        html += `<li><div class="entry ${escapeHtml(e.state)}">${info}</div><div class=path><b>${escapeHtml(e.handle)}</b> (${escapeHtml(e.archive)}): ${escapeHtml(e.fullinfo)}</div></li>`;
     }
     if (state.length == 0) {
         html += '<li>None</li>'
     }
-    root.innerHTML = html+'</ul>';
+    html_state.innerHTML = html+'</ul>';
 }
