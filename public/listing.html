@@ -3,6 +3,10 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
     <style>
+    .logo {
+        float: right;
+        margin: 10px;
+    }
     #root>ul>li {
         width: 50%;
         box-sizing: border-box;
@@ -67,6 +71,7 @@
     }
     </style>
 </head><body>
+    <img class=logo src=borg.png>
     <h3><a href=/>&lt; back</a> &nbsp; Backup of <span id=backup></span></h3>
     <div class=buttonbox><input type=button value="Restore selected elements" id=button disabled><div id=possibilities></div></div>
     <!-- root level entry div to have the system some (hidden) entry to find and change -->
