@@ -149,6 +149,7 @@ async function check_passwd (req, res, next) {
 // data will only be available after it has been successfully loaded
 openAll ();
 
+config.hook_preroutes?. (app);
 app.use (express.json ());
 app.use (express.urlencoded ({ extended: true }));
 app.use (express.static (path.join (__dirname, 'public')));
@@ -397,6 +398,7 @@ async function execute_borg_extract (q) {
 }
 
 
+config.hook_postroutes?. (app);
 var server;
 if (config.httpPort) {
     if (config.httpsPort) {
@@ -429,5 +431,6 @@ if (config.httpsPort) {
     };
     server = https.createServer (ssl_opts, app) .listen (config.httpsPort, function () {
         console.log ('Express https server listening on port ' + config.httpsPort);
+        config.hook_poststartup?. (app, server);
     });
 }

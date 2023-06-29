@@ -10,4 +10,7 @@
     },
     max_cache_entries: 5000,
     max_status_entries: 30,
+    //hook_preroutes   (app) {},
+    //hook_postroutes  (app) {},
+    //hook_poststartup (app, server) {},
 }
