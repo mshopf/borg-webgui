@@ -29,7 +29,7 @@ fetch ('/api/archives/'+backupurl, { headers : { 'Content-Type': 'application/js
 });
 
 function escapeHtml(x) {
-    return x .replaceAll ('&', '&amp;') .replaceAll ('<', '&lt;') .replaceAll ('>', '&gt;');
+    return x .replaceAll ('&', '&amp;') .replaceAll ('<', '&lt;') .replaceAll ('>', '&gt;') .replaceAll ('"', '&quot;');
 }
 
 function parse_archives (ar) {

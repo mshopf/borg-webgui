@@ -16,7 +16,7 @@ function escapeHtml(x) {
     if (x == null) {
         return '';
     }
-    return x .replaceAll ('&', '&amp;') .replaceAll ('<', '&lt;') .replaceAll ('>', '&gt;');
+    return x .replaceAll ('&', '&amp;') .replaceAll ('<', '&lt;') .replaceAll ('>', '&gt;') .replaceAll ('"', '&quot;');
 }
 function escapeQuery(x) {
     return encodeURIComponent (x) .replaceAll ('%20', '+');
