@@ -4,9 +4,11 @@ const https    = require ('https');
 const path     = require ('path');
 const fs       = require ('fs');
 const fs_p     = fs.promises;
+const stream_p = require ('stream').promises;
 const cp       = require ('child_process');
 const readline = require ('readline');
 const crypto   = require ('crypto');
+const byline   = require('byline');
 const argon2   = require ('argon2');
 const data     = require ('./data');
 
@@ -320,13 +322,14 @@ async function run_queue () {
 }
 
 async function execute_borg_extract (q) {
-    const log = await fs.promises.open ('log/'+q.handle+'.log', 'w', 0o644);
+    // We write the first few lines and all patterns asynchronously to log - might buffer up, but who cares
+    const log = fs.createWriteStream ('log/'+q.handle+'.log', { flags: 'w', mode: 0o644 });
     // use absolute path for patterns, as borg runs in a directory somewhere else
     const pat = await fs_p.open ('/tmp/borg-restore-'+q.handle+'.patterns', 'w', 0o644);
     // Make log data human readable
     const qlog = { ... q, texecute: new Date (q.texecute) .toLocaleString(), tschedule: new Date (q.tschedule) .toLocaleString() };
-    await log.writeFile (JSON.stringify (qlog, null, 4));
-    await log.writeFile ('\n***********\n\n');
+    log.write (JSON.stringify (qlog, null, 4));
+    log.write ('\n***********\n\n');
 
     var lastpath = '';
     for (const e of q.list) {
@@ -340,15 +343,15 @@ async function execute_borg_extract (q) {
         }
         // walk remaining directory parts
         for (; index >= 0 && index < e.length-1; index = e.indexOf ('/', index+1)) {
-            log.writeFile ('dir  '+e.substring (0, index)+'\n');
+            log.write           ('dir  '+e.substring (0, index)+'\n');
             await pat.writeFile ('+pf:'+e.substring (0, index)+'\n');
         }
         if (index >= 0) {
-            log.writeFile ('dir! '+e+'\n');
+            log.write           ('dir! '+e+'\n');
             await pat.writeFile ('+pf:'+e.substring (0, index)+'\n');
             await pat.writeFile ('+pp:'+e+'\n');
         } else {
-            log.writeFile ('file '+e+'\n');
+            log.write           ('file '+e+'\n');
             await pat.writeFile ('+pf:'+e+'\n');
         }
         lastpath = e;
@@ -359,36 +362,34 @@ async function execute_borg_extract (q) {
     await pat.close();
 
     const cwd = trees[q.backup].restore + '/' + q.archive
-    await log.writeFile (`\n***********\n\nrestore path: ${cwd}\n`);
+    log.write (`\n***********\n\nrestore path: ${cwd}\n`);
     await fs_p.mkdir (cwd, { recursive: true });
 
     const args = ['extract', '--list', ...trees[q.backup].borg_args??[], '--patterns-from', '/tmp/borg-restore-'+q.handle+'.patterns', config.borg_repo+'::'+q.backup+'-'+q.archive];
-    await log.writeFile ('borg '+args.join(' ')+'\n');
-    await log.writeFile ('\n***********\n\n');
+    log.write ('borg '+args.join(' ')+'\n');
+    log.write ('\n***********\n\n');
 
     const borg         = cp.spawn ('borg', args, {stdio: ['ignore', 'pipe', 'pipe'], cwd });
     const borg_promise = new Promise ((resolve, reject) => borg.on ('close', (code, signal) => resolve({code, signal}) ));
-    var borg_stderr_open = true;
-    borg.stderr.on ('close', () => borg_stderr_open = false );  // not needed for stdout, no new tick happened => still open
 
-    const rl = readline.createInterface ({ input: borg.stdout, output: null, terminal: false });
+    // pipe stdout and stderr of borg to log
     var lines = 0;
-    for await (const line of rl) {
-        await log.writeFile (line+'\n');
-        lines++;
-    }
-    if (borg_stderr_open) {
-        const rl2 = readline.createInterface ({ input: borg.stderr, output: null, terminal: false });
-        for await (const line of rl2) {
-            await log.writeFile (line+'\n');
+    async function* countit (source) {
+        for await (const chunk of source) {
             lines++;
+            yield chunk+'\n';
         }
     }
+    stream_p.pipeline (borg.stdout, new byline.LineStream(), countit, log, { end: false });
+    stream_p.pipeline (borg.stderr, new byline.LineStream(), countit, log, { end: false });
 
-    const { code, signal } = await borg_promise;
-    await log.writeFile ('\n\n***********\n');
-    await log.writeFile (`Exit code ${code}, signal ${signal}, lines ${lines}\n`);
-    await log.close();
+    const [ { code, signal } ] = await Promise.all ( [ borg_promise, stream_p.finished (borg.stdout), stream_p.finished (borg.stderr) ] );
+
+    log.write ('\n\n***********\n');
+    log.write (`Exit code ${code}, signal ${signal}, lines ${lines}\n`);
+    log.end ();
+    await stream_p.finished (log);
+    log.destroy ();
 
     await fs_p.unlink ('/tmp/borg-restore-'+q.handle+'.patterns');
     if (code !== 0 || signal != null) {
