@@ -3,7 +3,7 @@ const http     = require ('http');
 const https    = require ('https');
 const path     = require ('path');
 const fs       = require ('fs');
-const fs_p     = require ('fs').promises;
+const fs_p     = fs.promises;
 const cp       = require ('child_process');
 const readline = require ('readline');
 const crypto   = require ('crypto');
@@ -100,7 +100,7 @@ async function call_command (bin, args) {
 async function openTree (conf) {
     const name = conf.file.match (/^(.*?)([^/]*)-data-tree.bin$/);
     if (name == null || name[2] == null || name[2] == '') {
-        throw Error (conf.tree+' does not match file pattern');
+        throw Error (conf.file+' does not match file pattern');
     }
 
     console.error ('Opening data '+name[2]);
@@ -321,8 +321,8 @@ async function run_queue () {
 
 async function execute_borg_extract (q) {
     const log = await fs.promises.open ('log/'+q.handle+'.log', 'w', 0o644);
-    // use absolute path for patterns, as we run in a directory somewhere else
-    const pat = await fs.promises.open ('/tmp/borg-restore-'+q.handle+'.patterns', 'w', 0o644);
+    // use absolute path for patterns, as borg runs in a directory somewhere else
+    const pat = await fs_p.open ('/tmp/borg-restore-'+q.handle+'.patterns', 'w', 0o644);
     // Make log data human readable
     const qlog = { ... q, texecute: new Date (q.texecute) .toLocaleString(), tschedule: new Date (q.tschedule) .toLocaleString() };
     await log.writeFile (JSON.stringify (qlog, null, 4));
@@ -341,32 +341,32 @@ async function execute_borg_extract (q) {
         // walk remaining directory parts
         for (; index >= 0 && index < e.length-1; index = e.indexOf ('/', index+1)) {
             log.writeFile ('dir  '+e.substring (0, index)+'\n');
-            pat.writeFile ('+pf:'+e.substring (0, index)+'\n');
+            await pat.writeFile ('+pf:'+e.substring (0, index)+'\n');
         }
         if (index >= 0) {
             log.writeFile ('dir! '+e+'\n');
-            pat.writeFile ('+pf:'+e.substring (0, index)+'\n');
-            pat.writeFile ('+pp:'+e+'\n');
+            await pat.writeFile ('+pf:'+e.substring (0, index)+'\n');
+            await pat.writeFile ('+pp:'+e+'\n');
         } else {
             log.writeFile ('file '+e+'\n');
-            pat.writeFile ('+pf:'+e+'\n');
+            await pat.writeFile ('+pf:'+e+'\n');
         }
         lastpath = e;
     }
     // don't extract ANYTHING we haven't specifically added to the pattern
     // that includes directories (so don't recurse here)
-    pat.writeFile ('!*\n');
+    await pat.writeFile ('!*\n');
     await pat.close();
 
     const cwd = trees[q.backup].restore + '/' + q.archive
     await log.writeFile (`\n***********\n\nrestore path: ${cwd}\n`);
-    await fs.promises.mkdir (cwd, { recursive: true });
+    await fs_p.mkdir (cwd, { recursive: true });
 
     const args = ['extract', '--list', ...trees[q.backup].borg_args??[], '--patterns-from', '/tmp/borg-restore-'+q.handle+'.patterns', config.borg_repo+'::'+q.backup+'-'+q.archive];
     await log.writeFile ('borg '+args.join(' ')+'\n');
     await log.writeFile ('\n***********\n\n');
 
-    const borg = cp.spawn ('borg', args, {stdio: ['ignore', 'pipe', 'pipe'], cwd });
+    const borg         = cp.spawn ('borg', args, {stdio: ['ignore', 'pipe', 'pipe'], cwd });
     const borg_promise = new Promise ((resolve, reject) => borg.on ('close', (code, signal) => resolve({code, signal}) ));
     var borg_stderr_open = true;
     borg.stderr.on ('close', () => borg_stderr_open = false );  // not needed for stdout, no new tick happened => still open
@@ -390,7 +390,7 @@ async function execute_borg_extract (q) {
     await log.writeFile (`Exit code ${code}, signal ${signal}, lines ${lines}\n`);
     await log.close();
 
-    await fs.promises.unlink ('/tmp/borg-restore-'+q.handle+'.patterns');
+    await fs_p.unlink ('/tmp/borg-restore-'+q.handle+'.patterns');
     if (code !== 0 || signal != null) {
         return { error: `Exit code ${code}, signal ${signal}`, lines };
     }
