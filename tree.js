@@ -4,7 +4,7 @@ const readline = require ('readline');
 const cp       = require ('child_process');
 const fs_p     = require ('node:fs').promises;
 const stream_p = require ('node:stream').promises;
-const data     = require ('./data');
+const DBuffer  = require ('./dbuffer');
 const config   = eval ('('+fs.readFileSync ('./config.js', 'utf8')+')');
 
 const OUTPUT_FILE = 'borg-backup-data-tree.bin';

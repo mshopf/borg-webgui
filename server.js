@@ -10,7 +10,7 @@ const readline = require ('readline');
 const crypto   = require ('crypto');
 const byline   = require ('byline');
 const argon2   = require ('argon2');
-const DBuffer  = require ('./data');
+const DBuffer  = require ('./dbuffer');
 
 const app      = express ();
 const trees    = {};
