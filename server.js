@@ -10,7 +10,7 @@ const readline = require ('readline');
 const crypto   = require ('crypto');
 const byline   = require('byline');
 const argon2   = require ('argon2');
-const data     = require ('./data');
+const DBuffer  = require ('./data');
 
 const app      = express ();
 const trees    = {};
@@ -107,16 +107,17 @@ async function openTree (conf) {
 
     console.error ('Opening data '+name[2]);
     var fh = await fs_p.open (conf.file, 'r');
-    await fh.read (data.cache_buf, 0, 12, 0);
-    if (data.init_tag_buf.compare (data.cache_buf, 0, 4) != 0) {
+    var db = new DBuffer (fh);
+    await db.read_at (0);
+    if (DBuffer.INIT_TAG_BUF.compare (db.cache_buf, db.cache_buf_pos_read, db.cache_buf_pos_read+4) != 0) {
         throw Error ('not a bOt0 file');
     }
-    data.cache_buf_pos = 4;
-    var offset   = data.buf_read_uvs ();
-    var archives = await data.read_archives (fh, 0x20);
-    var tree     = await data.read_tree     (fh, offset);
+    db.advance (4);
+    var offset   = db.read_uvs ();
+    var archives = await db.read_archives (0x20);
+    var tree     = await db.read_tree     (offset);
 
-    trees[name[2]] = { archives, fh, offset, tree, cache: {}, ...conf };
+    trees[name[2]] = { archives, db, offset, tree, cache: {}, ...conf };
 }
 
 async function openAll () {
@@ -212,7 +213,7 @@ app.get ('/api/data/:backup/:path(*)', async function (req, res) {
                     return;
                 }
                 if (t.o > 0) {
-                    t = await data.read_tree (entry.fh, t.o);
+                    t = await entry.db.read_tree (t.o);
                     console.log ('loaded /'+p);
                     entry.cache[p] = t;
                     if (Object.keys (entry.cache) .length > config.max_cache_entries) {
@@ -227,7 +228,7 @@ app.get ('/api/data/:backup/:path(*)', async function (req, res) {
         for (const i in t.c) {
             if (t.c[i].a === undefined) {
                 var offset = t.c[i].o;
-                t.c[i] = await data.read_tree (entry.fh, offset);
+                t.c[i] = await entry.db.read_tree (offset);
                 t.c[i].o = offset;
                 if (logging) {
                     console.log (`fillin /${p}`);
