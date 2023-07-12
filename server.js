@@ -8,7 +8,7 @@ const stream_p = require ('stream').promises;
 const cp       = require ('child_process');
 const readline = require ('readline');
 const crypto   = require ('crypto');
-const byline   = require('byline');
+const byline   = require ('byline');
 const argon2   = require ('argon2');
 const DBuffer  = require ('./data');
 
@@ -106,16 +106,16 @@ async function openTree (conf) {
     }
 
     console.error ('Opening data '+name[2]);
-    var fh = await fs_p.open (conf.file, 'r');
-    var db = new DBuffer (fh);
+    const fh = await fs_p.open (conf.file, 'r');
+    const db = new DBuffer (fh);
     await db.read_at (0);
     if (DBuffer.INIT_TAG_BUF.compare (db.cache_buf, db.cache_buf_pos_read, db.cache_buf_pos_read+4) != 0) {
         throw Error ('not a bOt0 file');
     }
     db.advance (4);
-    var offset   = db.read_uvs ();
-    var archives = await db.read_archives (0x20);
-    var tree     = await db.read_tree     (offset);
+    const offset   = db.read_uvs ();
+    const archives = await db.read_archives (0x20);
+    const tree     = await db.read_tree     (offset);
 
     trees[name[2]] = { archives, db, offset, tree, cache: {}, ...conf };
 }

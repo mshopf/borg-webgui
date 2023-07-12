@@ -15,14 +15,22 @@ class DBuffer {
     cache_buf;
 
     constructor (fh, initial_pos = 0) {
-        this.fh = fh;
         this.cache_buf = Buffer.alloc (DBuffer.CACHE_BUF_MAX);
-        this.file_currentoffset = initial_pos;
-        this.cache_buf_write = 0;
+        this.open (fh, initial_pos);
     }
 
     // TODO: mixing read/write will not really work ATM
+    // TODO: use own writing position, add goto(), remove re-opening file in tree.js
 
+    // re-open file, so we can reuse buffer
+    open (fh, initial_pos = 0) {
+        this.fh = fh;
+        this.file_currentoffset = initial_pos;
+        this.cache_buf_write = 0;
+    }
+    close () {
+        this.fh.close();
+    }
     //
     // WRITE INTERFACE
     //
