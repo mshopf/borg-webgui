@@ -55,7 +55,7 @@ class DBuffer {
     }
     // check cache for space, write it out if more is required
     async check_flush (required) {
-        if (this.cache_buf_write + required <= this.cache_buf_MAX) {
+        if (this.cache_buf_write + required <= DBuffer.CACHE_BUF_MAX) {
             return;
         }
         return this.write_flush();
@@ -246,7 +246,7 @@ class DBuffer {
     async write_tree (tree) {
         tree.o = this.file_currentoffset + this.cache_buf_write;
         // .s .t.length .l.length .a.length .c.length/null + a*svs + .t + .t
-        await this.check_flush ((5+tree.a.length) * DBuffer.VS_LENGTH_MAX + 2 * DBufffer.PATH_LENGTH_MAX);
+        await this.check_flush ((5+tree.a.length) * DBuffer.VS_LENGTH_MAX + 2 * DBuffer.PATH_LENGTH_MAX);
         this.write_uvs    (tree.s);
         this.write_uvs    (tree.t);
         this.write_string (tree.l);
@@ -412,7 +412,7 @@ class DBuffer {
     // Hi level: read single tree element to cache
     async read_tree (offset) {
         await this.read_at (offset, 4 * DBuffer.VS_LENGTH_MAX + DBuffer.FILE_LENGTH_MAX);
-        var t = { a: [] };
+        var t = { a: [], o: offset };
         t.s = this.read_uvs();
         t.t = this.read_uvs();
         t.l = this.read_string();
