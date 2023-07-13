@@ -248,8 +248,9 @@ async function read_full_bin_tree (fh, offset) {
 async function write_full_bin_tree (st, tree) {
     // Have to write depth first, to know offsets of children
     if (tree.c !== undefined) {
-        for (var e in tree.c) {
             await write_full_bin_tree (st, tree.c[e]);
+        const keys = Object.keys (tree.c) .sort();
+        for (var e of keys) {
         }
     }
     await data.write_tree (st, tree);
