@@ -68,7 +68,7 @@ function consolidate_dirs (tree) {
     return ar;
 }
 
-// recursivelly remove an archive
+// remove an archive in one tree level
 function remove_archive (tree, nr) {
     for (const i in tree.a) {
         // Logic:
@@ -108,14 +108,34 @@ function remove_archive (tree, nr) {
             break;
         }
     }
+}
+
+// recursivelly remove an archive
+function remove_full_archive (tree, nr) {
+    remove_archive (tree, nr);
     // recurse
     if (tree.c !== undefined) {
         for (const e in tree.c) {
-            remove_archive (tree.c[e], nr);
+            remove_full_archive (tree.c[e], nr);
         }
     }
 }
 
+// incrementally remove an archive
+async function remove_archive_incr (tree, nr, input_db, output_db) {
+    remove_archive (tree, nr);
+    // Have to write depth first, to know offsets of children
+    if (tree.c !== undefined) {
+        const keys = Object.keys (tree.c) .sort();
+        for (var e of keys) {
+            // tree.c[e].o contains offset to element in input_db
+            tree.c[e] = await input_db.read_tree (tree.c[e].o);
+            await remove_archive_incr (tree.c[e], nr, input_db, output_db);
+            // tree.c[e].o now contains offset to element in output_db
+        }
+    }
+    await output_db.write_tree (tree);
+}
 
 // create a node
 function add_node (tree, entry, archive, s, t, l) {
@@ -318,10 +338,6 @@ async function end_tree_incr (file, db, offset) {
     await db.close ();
 }
 
-async function remove_archive_incr (tree, nr, input_db, output_db) {
-
-}
-
 async function add_archive_incr (name, nr, input_db, output_db) {
 
 }
@@ -397,7 +413,7 @@ async function main () {
                 var name = archives[nr];
                 if (obj_archives [name] === undefined) {
                     console.error ('purging archive '+name);
-                    remove_archive (tree, nr);
+                    remove_full_archive (tree, nr);
                     archives.splice (nr, 1);
                 }
                 delete obj_archives[name];
@@ -429,7 +445,7 @@ async function main () {
                         continue;
                     }
                     console.error ("removing archive "+nr);
-                    remove_archive (tree, nr);
+                    remove_full_archive (tree, nr);
                     archives.splice (nr, 1);
                     continue;
                 }
@@ -455,12 +471,20 @@ async function main () {
     } else if (mode === '-i') {
 
         console.error (files[0]);
-        const name = files[0].match (/^([-+])((.*\/)?([^\/]*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
-        if (name == null || name[1] == null) {
+        const name = files[0]?.match (/^([-+])((.*\/)?([^\/]*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
+        if (name == null) {
+            console.error ("copying archive ");
+            output_db = await create_tree_incr (datafile+".new", archives);
+            // removing archive #1e30 does not do anything
+            await remove_archive_incr (tree, 1e30, input_db, output_db);
+            await end_tree_incr (datafile+".new", output_db, tree.o);
+            await fs_p.rename (datafile+".new", datafile);
+        }
+        else if (name[1] == null) {
             console.error ("* does not match parameter pattern");
             return;
         }
-        if (name[1] == '-') {
+        else if (name[1] == '-') {
             // remove archive
             var nr;
             for (nr = 1; nr < archives.length; nr++) {
