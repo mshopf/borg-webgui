@@ -358,20 +358,10 @@ async function main () {
         if (mode === '-m' || mode === '-p') {
             console.error ('Reading original data '+datafile);
             try {
-                if (datafile.slice (-4) === ".bin") {
-                    var db;
-                    [ archives, tree, db ] = await open_tree_incr (datafile);
-                    tree = await read_full_bin_tree (db, tree.o);
-                    await db.close ();
-
-                } else {
-                    var stream = fs.createReadStream (datafile);
-                    if (datafile.slice (-4) === ".bz2") {
-                        stream = stream.pipe (bz2());
-                    }
-                    var txt = await streamToString (stream);
-                    [ archives, tree ] = JSON.parse (txt);
-                }
+                var db;
+                [ archives, tree, db ] = await open_tree_incr (datafile);
+                tree = await read_full_bin_tree (db, tree.o);
+                await db.close ();
                 last_tree = tree;
                 last_path = '';
             } catch (e) {
@@ -484,10 +474,10 @@ async function main () {
             }
             console.error ("removing archive "+nr);
             archives.splice (nr, 1);
-            output_db = await create_tree_incr (files[0]+".new", archives);
+            output_db = await create_tree_incr (datafile+".new", archives);
             await remove_archive_incr (tree, nr, input_db, output_db);
-            await end_tree_incr (files[0]+".new", output_db, tree.o);
-            await fs_p.rename (files[0]+".new", files[0]);
+            await end_tree_incr (datafile+".new", output_db, tree.o);
+            await fs_p.rename (datafile+".new", datafile);
         }
         else if (name[1] == '+') {
             // add archive
@@ -499,6 +489,7 @@ async function main () {
         }
     }
 
+    console.error ("Memory Usage: "+ process.memoryUsage().heapUsed/(1024*1024) + " MB");
     console.error ('done');
 };
 
