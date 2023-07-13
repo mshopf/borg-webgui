@@ -234,29 +234,29 @@ async function read_tree (file, archive) {
     return tree;
 }
 
-async function read_full_bin_tree (fh, offset) {
-    var tree = await data.read_tree (fh, offset);
+async function read_full_bin_tree (db, offset) {
+    var tree = await db.read_tree (offset);
     if (tree.c !== undefined) {
         for (var e in tree.c) {
             // currently replaces data - makes lots of unnecessary junk objects
-            tree.c[e] = await read_full_bin_tree (fh, tree.c[e].o);
+            tree.c[e] = await read_full_bin_tree (db, tree.c[e].o);
         }
     }
     return tree;
 }
 
-async function write_full_bin_tree (st, tree) {
+async function write_full_bin_tree (db, tree) {
     // Have to write depth first, to know offsets of children
     if (tree.c !== undefined) {
-            await write_full_bin_tree (st, tree.c[e]);
         const keys = Object.keys (tree.c) .sort();
         for (var e of keys) {
+            await write_full_bin_tree (db, tree.c[e]);
         }
     }
-    await data.write_tree (st, tree);
+    await db.write_tree (tree);
 }
 
-var archives, tree, last_tree, last_path;
+var archives, tree, input_db, output_db, last_tree, last_path;
 
 function streamToString (stream) {
     const chunks = [];
@@ -264,6 +264,7 @@ function streamToString (stream) {
         stream.on ('data',  (chunk) => chunks.push (Buffer.from (chunk)));
         stream.on ('error', (err)   => reject  (err));
         stream.on ('end',   ()      => resolve (Buffer .concat (chunks) .toString ('utf8')));
+        stream.on ('close', ()      => console.error ('stream closed'));
     });
 }
 async function call_command (bin, args) {
@@ -271,146 +272,232 @@ async function call_command (bin, args) {
     return streamToString (child.stdout);
 }
 
+async function open_tree_incr (file) {
+    const name = file.match (/^(.*\/)?([^/]*)-data-tree.bin$/);
+    console.error (name);
+    if (name == null || name[2] == null || name[2] == '') {
+        throw Error (file+' does not match file pattern');
+    }
+
+    console.error ('Opening data '+name[2]);
+    const fh = await fs_p.open (file, 'r');
+    const db = new DBuffer (fh);
+    await db.read_at (0);
+    if (DBuffer.INIT_TAG_BUF.compare (db.cache_buf, db.cache_buf_pos_read, db.cache_buf_pos_read+4) != 0) {
+        throw Error ('not a bOt0 file');
+    }
+    db.advance (4);
+    const offset   = db.read_uvs ();
+    const archives = await db.read_archives (0x20);
+    const tree     = await db.read_tree     (offset);
+
+    return [archives, tree, db];
+}
+
+async function create_tree_incr (file, archives) {
+    var fh = await fs_p.open (file, 'w', 0o644);
+    var db = new DBuffer (fh);
+    db.write_pos = 0x20;
+    await db.write_archives (archives);
+    return db;
+}
+
+async function end_tree_incr (file, db, offset) {
+    // flush write buffer unconditionally
+    await db.write_flush ();
+    await db.close ();
+
+    // Create buffer object with tag and offset to main data structure
+    const fh = await fs_p.open (file, 'r+', 0o644);
+    db.open (fh);
+    // Write to slot at beginning of file
+    db.write_buf (DBuffer.INIT_TAG_BUF);
+    db.write_uvs (offset);
+    console.error (db.cache_buf);
+    await db.write_flush ();
+    await db.close ();
+}
+
+async function remove_archive_incr (tree, nr, input_db, output_db) {
+
+}
+
+async function add_archive_incr (name, nr, input_db, output_db) {
+
+}
+
 
 async function main () {
 
-    const [,, datafile, ...files] = process.argv;
+    var [,, mode, datafile, ...files] = process.argv;
 
-    if (datafile == null || datafile === '') {
+    if (! mode) {
         // TODO: loop over all data in config.js
-        console.error ('Usage: cmd datafile.[json[.bz2]|.bin]|- [/regex] (reads in borg list and determines added/removed archives)');
-        console.error ('Usage: cmd datafile.[json[.bz2]|.bin]|- [[-|+]archive] [...]');
-        return;
+        console.error ('Usage: cmd -m datafile.[json[.bz2]|.bin]|- /regex|(-|+)archive[.bz2] [...]');
+        console.error ('       cmd -i BACKUP-data-tree.bin|- (-|+)archive[.bz2]');
+        console.error ('       cmd -a BACKUP-data-tree.bin|- /regex | [(-|+)archive[.bz2]] [...]');
+        console.error ('       cmd -p BACKUP-data-tree.bin|- /regex | [(-|+)archive[.bz2]] [...]');
+        console.error ('-m: in-memory tree building  -i: incremental build (single)  -a: incremental build (all, looping)  -p: in-memory print');
+        console.error ('/regex: reads in borg list and determines added/removed archives automatically');
+        console.error ('-archive_name: removes archive  +archive_file[.bz2]: adds archive   (multiple possible)');
+        console.error ('-i: work in progress   -a: NOT IMPLEMENTED YET');
+        process.exit (1);
+    }
+    if (mode !== '-m' && mode !== '-i' /* && mode !== '-a' */ && mode !== '-p') {
+        console.error ('bad mode '+mode);
+        process.exit (1);
     }
     if (datafile === '-') {
+        datafile = OUTPUT_FILE;
         console.error ('fresh start, creating new backup-data');
         archives = [ null ];
         tree = { a:[], c:{} };
         last_tree = tree;
         last_path = '';
     } else {
-        console.error ('Reading original data '+datafile);
-        try {
-            if (datafile.slice (-4) === ".bin") {
-                var fh = await fs_p.open (datafile, 'r');
-                // direct access, thus no stream
+        if (mode === '-m' || mode === '-p') {
+            console.error ('Reading original data '+datafile);
+            try {
+                if (datafile.slice (-4) === ".bin") {
+                    var db;
+                    [ archives, tree, db ] = await open_tree_incr (datafile);
+                    tree = await read_full_bin_tree (db, tree.o);
+                    await db.close ();
 
-                // Read start tag and initial offset
-                await fh.read (data.cache_buf, 0, 12, 0);
-                if (data.init_tag_buf.compare (data.cache_buf, 0, 4) != 0) {
-                    throw Error ('not a bOt0 file');
+                } else {
+                    var stream = fs.createReadStream (datafile);
+                    if (datafile.slice (-4) === ".bz2") {
+                        stream = stream.pipe (bz2());
+                    }
+                    var txt = await streamToString (stream);
+                    [ archives, tree ] = JSON.parse (txt);
                 }
-                data.cache_buf_pos = 4;
-                var initial_tree_offset = data.buf_read_uvs ();
-
-                archives = await data.read_archives (fh, 0x20);
-                tree     = await read_full_bin_tree (fh, initial_tree_offset);
-
-                await fh.close ();
-
-            } else {
-                var stream = fs.createReadStream (datafile);
-                if (datafile.slice (-4) === ".bz2") {
-                    stream = stream.pipe (bz2());
-                }
-                var txt = await streamToString (stream);
-                [ archives, tree ] = JSON.parse (txt);
+                last_tree = tree;
+                last_path = '';
+            } catch (e) {
+                console.error ('Reading data: '+e.stack);
+                return;
             }
+        } else {
+            [ archives, tree, input_db ] = await open_tree_incr (datafile);
             last_tree = tree;
             last_path = '';
-        } catch (e) {
-            console.error ('Reading data: '+e.stack);
-            return;
         }
     }
 
+    // parse borg list of archives if wanted
+    const obj_archives = { };
     if (files[0] && files[0][0] === '/' && files.length === 1) {
         console.error ('reading borg archive list');
         const filter = new RegExp (files[0].slice(1));
         const json = JSON.parse (await call_command ('borg', ['list', '--json', config.borg_repo]));
-        const obj_archives = { };
         for (const e of json.archives) {
-            const name = e.name.match (/^((.*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
+            const name = e.name.match (/^((.*\/)?([^\/]*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
             if (name [1] .match (filter)) {
-                obj_archives[name[3]] = e.name;
-            }
-        }
-        // walk backwards (removing an archive shifts everything after it back)
-        // archives[0] is always null
-        for (var nr = archives.length-1; nr > 0; nr--) {
-            var name = archives[nr];
-            if (obj_archives [name] === undefined) {
-                console.error ('purging archive '+name);
-                remove_archive (tree, nr);
-                archives.splice (nr, 1);
-            }
-            delete obj_archives[name];
-        }
-        for (const e of Object.keys (obj_archives) .sort()) {
-            console.error ('adding archive '+obj_archives[e]+' as '+e);
-            await read_tree (obj_archives[e], archives.length);
-            archives.push (e);
-        }
-    } else {
-
-        for (const i in files) {
-            console.error (files[i]);
-            const name = files[i].match (/^([-+])((.*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
-            if (name == null || name[1] == null) {
-                console.error ("* does not match parameter pattern");
-                return;
-            }
-            if (name[1] == '-') {
-                // remove archive
-                var nr;
-                for (nr = 1; nr < archives.length; nr++) {
-                    if (name[4] === archives[nr]) {
-                        break;
-                    }
-                }
-                if (nr >= archives.length) {
-                    console.error ('* not part of archives: '+name[4]);
-                    continue;
-                }
-                console.error ("removing archive "+nr);
-                remove_archive (tree, nr);
-                archives.splice (nr, 1);
-                continue;
-            }
-            else if (name[1] == '+') {
-                // add archive
-                await read_tree (name[2], archives.length);
-                archives.push (name[4]);
+                obj_archives[name[4]] = e.name;
             }
         }
     }
 
-    consolidate_dirs (tree);
-    //walk_tree (tree, "");
-    //console.log (JSON.stringify ([archives, tree], undefined, 4));
+    if (mode === '-m' || mode === '-p') {
+        if (files[0] && files[0][0] === '/' && files.length === 1) {
+            // walk backwards (removing an archive shifts everything after it back)
+            // archives[0] is always null
+            for (var nr = archives.length-1; nr > 0; nr--) {
+                var name = archives[nr];
+                if (obj_archives [name] === undefined) {
+                    console.error ('purging archive '+name);
+                    remove_archive (tree, nr);
+                    archives.splice (nr, 1);
+                }
+                delete obj_archives[name];
+            }
+            for (const e of Object.keys (obj_archives) .sort()) {
+                console.error ('adding archive '+obj_archives[e]+' as '+e);
+                await read_tree (obj_archives[e], archives.length);
+                archives.push (e);
+            }
+        } else {
 
-    var fh = await fs_p.open (OUTPUT_FILE, 'w', 0o644);
-    var st = fh.createWriteStream ();
-    data.file_currentoffset = 0;
-    st.on ('error', (e) => {throw e});
+            for (const i in files) {
+                console.error (files[i]);
+                const name = files[i].match (/^([-+])((.*\/)?([^\/]*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
+                if (name == null || name[1] == null) {
+                    console.error ("* does not match parameter pattern");
+                    return;
+                }
+                if (name[1] == '-') {
+                    // remove archive
+                    var nr;
+                    for (nr = 1; nr < archives.length; nr++) {
+                        if (name[5] === archives[nr]) {
+                            break;
+                        }
+                    }
+                    if (nr >= archives.length) {
+                        console.error ('* not part of archives: '+name[5]);
+                        continue;
+                    }
+                    console.error ("removing archive "+nr);
+                    remove_archive (tree, nr);
+                    archives.splice (nr, 1);
+                    continue;
+                }
+                else if (name[1] == '+') {
+                    // add archive
+                    await read_tree (name[2], archives.length);
+                    archives.push (name[5]);
+                }
+            }
+        }
 
-    data.cache_buf_pos = 0x20;
-    await data.write_archives (st, archives);
-    await write_full_bin_tree (st, tree);
+        consolidate_dirs (tree);
 
-    // flush write buffer unconditionally
-    await data.buf_check_flush (st, data.CACHE_BUF_MAX+1);
-    st.end ();
-    await stream_p.finished (st);
+        if (mode === '-p') {
+            console.log (JSON.stringify (tree, null, 4));
+        } else {
+            output_db = await create_tree_incr (datafile+'.new', archives);
+            await write_full_bin_tree (output_db, tree);
+            await end_tree_incr (datafile+'.new', output_db, tree.o);
+            await fs_p.rename (datafile+".new", datafile);
+        }
 
-    // Create buffer object with tag and offset to main data structure
-    data.cache_buf_pos = 0;
-    data.buf_write_buf (data.init_tag_buf);
-    data.buf_write_uvs (tree.o);
-    // Write to slot at beginning of file
-    var fh = await fs_p.open (OUTPUT_FILE, 'r+', 0o644);
-    await fh.write (data.cache_buf, 0, data.VS_LENGTH_MAX+4, 0);
-    await fh.close ();
+    } else if (mode === '-i') {
+
+        console.error (files[0]);
+        const name = files[0].match (/^([-+])((.*\/)?([^\/]*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
+        if (name == null || name[1] == null) {
+            console.error ("* does not match parameter pattern");
+            return;
+        }
+        if (name[1] == '-') {
+            // remove archive
+            var nr;
+            for (nr = 1; nr < archives.length; nr++) {
+                if (name[5] === archives[nr]) {
+                    break;
+                }
+            }
+            if (nr >= archives.length) {
+                console.error ('* not part of archives: '+name[5]);
+                process.exit  (1);
+            }
+            console.error ("removing archive "+nr);
+            archives.splice (nr, 1);
+            output_db = await create_tree_incr (files[0]+".new", archives);
+            await remove_archive_incr (tree, nr, input_db, output_db);
+            await end_tree_incr (files[0]+".new", output_db, tree.o);
+            await fs_p.rename (files[0]+".new", files[0]);
+        }
+        else if (name[1] == '+') {
+            // add archive
+            archives.push (name[5]);
+            output_db = await create_tree_incr (datafile+".new", archives);
+            await add_archive_incr (name[2], archives.length, input_db, output_db);
+            await end_tree_incr (datafile+".new", output_db, tree.o);
+            await fs_p.rename (datafile+".new", datafile);
+        }
+    }
 
     console.error ('done');
 };
