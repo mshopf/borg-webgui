@@ -37,8 +37,20 @@ function consolidate_dirs (tree) {
     // Logic:
     // Unite all entries below this directory.
     // Negative entries mean changes, they win over positive entries
+    var count = 0, sumsize = 0;
     for (const e in tree.c) {
         var sub = consolidate_dirs (tree.c[e]);
+        // count # of elements (dirs and files)
+        if (tree.c[e].C !== undefined) {
+            count += tree.c[e].C;
+        }
+        count++;
+        // sum up sizes; S (maxsumsize) for dirs, s (size) for files
+        if (tree.c[e].S !== undefined) {
+            sumsize += tree.c[e].S;
+        } else if (tree.c[e].s !== undefined) {
+            sumsize += tree.c[e].s;
+        }
         var new_ar = [];
         // i: index over new entries, j: index over old current entries
         for (var i = 0, j = 0; i < sub.length; i++) {
@@ -64,6 +76,9 @@ function consolidate_dirs (tree) {
         }
         ar = new_ar;
     }
+    // save largest number / size
+    tree.C = tree.C > count   ? tree.C : count;  // always false for tree.C undefined
+    tree.S = tree.S > sumsize ? tree.S : sumsize;
     tree.a = ar;
     return ar;
 }
@@ -632,6 +647,7 @@ main().catch ((e) => console.error ('* '+e.stack));
 //         c "Children" - keys are dir/file names ; null for already saved dirs (incremental only)
 //         s "Size"  t "mTime"  l "link" of last added archive
 //         c available on dirs, s and t on files, l on links
+//         S maximum size, C maximum file count (both on dirs)
 //         o offset to structure on disk
     //{"type": "d", "mode": "drwxr-xr-x", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig", "healthy": true, "source": "", "linktarget": "", "flags": 0, "isomtime": "2022-01-24T16:33:10.461280", "size": 0}
     //{"type": "-", "mode": "-rw-r--r--", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig/64bit_strstr_via_64bit_strstr_sse2_unaligned", "healthy": true, "source": "", "linktarget": "", "flags": 0, "isomtime": "2021-11-15T19:29:28.000000", "size": 0}

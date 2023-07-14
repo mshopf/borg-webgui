@@ -246,7 +246,7 @@ class DBuffer {
     async write_tree (tree) {
         tree.o = this.file_currentoffset + this.cache_buf_write;
         // .s .t.length .l.length .a.length .c.length/null + a*svs + .t + .t
-        await this.check_flush ((5+tree.a.length) * DBuffer.VS_LENGTH_MAX + 2 * DBuffer.PATH_LENGTH_MAX);
+        await this.check_flush ((7 + tree.a.length) * DBuffer.VS_LENGTH_MAX + 2 * DBuffer.PATH_LENGTH_MAX);
         this.write_uvs    (tree.s);
         this.write_uvs    (tree.t);
         this.write_string (tree.l);
@@ -259,6 +259,8 @@ class DBuffer {
         } else {
             const keys = Object.keys (tree.c) .sort();
             this.write_uvs (keys.length + 1);        // 0 is reserved for 'no array'
+            this.write_uvs (tree.C);
+            this.write_uvs (tree.S);
             for (const i of keys) {
                 if (tree.c[i].o === undefined) {
                     console.error ('undefined .o');
@@ -411,7 +413,7 @@ class DBuffer {
 
     // Hi level: read single tree element to cache
     async read_tree (offset) {
-        await this.read_at (offset, 4 * DBuffer.VS_LENGTH_MAX + DBuffer.FILE_LENGTH_MAX);
+        await this.read_at (offset, 6 * DBuffer.VS_LENGTH_MAX + DBuffer.FILE_LENGTH_MAX);
         var t = { a: [], o: offset };
         t.s = this.read_uvs();
         t.t = this.read_uvs();
@@ -423,9 +425,11 @@ class DBuffer {
         }
         len = this.read_uvs();
         if (len > 0) {
-            await this.check_avail (len * (2 * DBuffer.VS_LENGTH_MAX + DBuffer.FILE_LENGTH_MAX));
+            t.C = this.read_uvs();
+            t.S = this.read_uvs();
             t.c = {};
             for (var i = 1; i < len; i++) {
+                await this.check_avail (2 * DBuffer.VS_LENGTH_MAX + DBuffer.FILE_LENGTH_MAX);
                 var str = this.read_string();
                 t.c[str] = { o: this.read_uvs() };
             }
