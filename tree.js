@@ -582,8 +582,7 @@ async function main () {
         if (name == null) {
             console.error ("copying archive ");
             output_db = await create_tree_incr (datafile+".new", archives);
-            // removing archive #1e30 does not do anything
-            await remove_archive_incr (tree, 1e30, input_db, output_db);
+            await write_full_bin_tree_incr (input_db, output_db, tree);
             await end_tree_incr (datafile+".new", output_db, tree.o);
             await fs_p.rename (datafile+".new", datafile);
         }
