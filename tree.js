@@ -137,57 +137,8 @@ async function remove_archive_incr (tree, nr, input_db, output_db) {
     await output_db.write_tree (tree);
 }
 
-// create a node
-function add_node (tree, entry, archive, s, t, l) {
-    if (tree.c[entry] === undefined) {
-        tree.c[entry] = { a: [] };
-    }
-    const node = tree.c[entry];
-    const a = node.a;
-    const last_a = a[a.length-1];
-    const ns = node.s, nt = node.t, nl = node.l;
-    node.s = s;
-    node.t = t;
-    node.l = l;
-    if (last_a === -archive) {
-        return;
-    }
-    if (ns !== s || nt !== t || nl !== l) {
-        if (last_a === archive) {
-            a[a.length-1] = -archive;
-        } else {
-            a.push (-archive);
-        }
-    } else {
-        if (last_a !== archive) {
-            a.push (archive);
-        }
-    }
-}
 
-// create / set directory entry
-function add_tree (t, entry, archive) {
-    if (t.c[entry] === undefined) {
-        t.c[entry] = { a: [], c: {} };
-    }
-    return t.c[entry];
-}
-
-// find and create subdirectory entries
-function find_tree (tree, path, archive) {
-    const p = path.split ('/');
-    var t = tree;
-    for (const e of p) {
-        if (e === '') {
-            continue;
-        }
-        t = add_tree (t, '/'+e, archive);
-    }
-    return t;
-}
-
-
-async function read_tree (file, archive) {
+async function read_tree (file, archive, tree, _find_tree, _add_tree, _add_node) {
 
     var stream, child;
     if (file.match (/(\.json|\.bz2)$/)) {
@@ -217,26 +168,29 @@ async function read_tree (file, archive) {
         const path = "/" + obj.path;
         const last_index = path.lastIndexOf ('/');
         if (last_index !== last_path.length) {
-            // There has been a dir entry missing
+            // There has been a dir entry missing in input (shouldn't occur), or we switched directory level
             last_path = path.slice (0, last_index);
-            last_tree = find_tree (tree, last_path, archive);
+            last_tree = await _find_tree (tree, last_path, archive);
         }
         // directory entry?
         if (obj.type === 'd') {
             const dir_name = path.slice (last_path.length);
             last_path = path;
-            last_tree = add_tree (last_tree, dir_name, archive);
+            last_tree = await _add_tree (last_tree, dir_name, archive);
             continue;
         }
-        // Something different - find in tree and create entries as necessary
+        // Something different - create entries as necessary
         const entry = path.slice (last_index+1);
+        var node;
         if (obj.type === '-') {
-            add_node (last_tree, entry, archive, obj.size, Date.parse (obj.isomtime+'Z'), undefined);
+            node = { a: undefined, s: obj.size, t: Date.parse (obj.isomtime+'Z'), l: undefined, o: undefined };
         } else if (obj.type === 'l') {
-            add_node (last_tree, entry, archive, undefined, undefined, obj.linktarget)
+            node = { a: undefined, s: undefined, t: undefined, l: obj.linktarget, o: undefined };
         } else {
             console.error (line);
+            continue;
         }
+        await _add_node (last_tree, entry, archive, node);
     }
 
     console.error ("Memory Usage: "+ process.memoryUsage().heapUsed/(1024*1024) + " MB");
@@ -255,6 +209,141 @@ async function read_tree (file, archive) {
     }
 
     return tree;
+}
+
+// add a full archive to in-memory tree
+async function add_full_archive (file, name, tree) {
+    await read_tree (file, archives.length, tree, find_tree, add_tree, add_node);
+    archives.push (name);
+
+    // find and create subdirectory entries
+    function find_tree (tree, path, archive) {
+        const p = path.split ('/');
+        var t = tree;
+        for (const e of p) {
+            if (e === '') {
+                continue;
+            }
+            t = add_tree (t, '/'+e, archive);
+        }
+        return t;
+    }
+
+    // create / set directory entry
+    function add_tree (t, entry, archive) {
+        if (t.c[entry] === undefined) {
+            t.c[entry] = { a: [], c: {} };
+        }
+        return t.c[entry];
+    }
+
+    // create a node
+    function add_node (t, e, archive, n) {
+        if (t.c[e] === undefined) {
+            n.a = [ -archive ];
+            t.c[e] = n;
+        } else {
+            const oldnode = t.c[e];
+            t.c[e] = n;
+            n.a = oldnode.a;
+            const last_a = oldnode.a[oldnode.a.length-1];
+            if (last_a === archive || last_a === -archive) {
+                throw Error ('duplicate archive in entry');
+                return;
+            }
+            if (oldnode.s !== n.s || oldnode.t !== n.t || oldnode.l !== n.l) {
+                n.a.push (-archive);
+            } else {
+                n.a.push (archive);
+            }
+        }
+    }
+}
+
+// incrementally add an archive
+async function add_archive_incr (file, name, archive, input_db, output_db) {
+    var current_trees = [];
+    await read_tree (file, archive, tree, find_tree, add_tree, add_node);
+    // write rest of tree, keep loading while it occurs
+    await write_full_bin_tree_incr (input_db, output_db, tree);
+    return;
+
+    // find and create subdirectory entries
+    async function find_tree (tree, path, archive) {
+        const new_trees = [];
+        const p = path.split ('/');
+        var t = tree;
+        for (const e of p) {
+            if (e === '') {
+                continue;
+            }
+            t = await add_tree (t, '/'+e, archive);
+            new_trees.push (t);
+        }
+        // check where we differ in path and write old tree to disk (it's done)
+        for (const i in current_trees) {
+            if (new_trees[i] != current_trees[i]) {
+                if (current_trees[i] !== undefined) {
+                    await write_full_bin_tree_incr (input_db, output_db, current_trees[i]);
+                }
+                // everything below has been written as well
+                break;
+            }
+        }
+        current_trees = new_trees;
+        return t;
+    }
+
+    // create / set directory entry
+    async function add_tree (t, e, archive) {
+        if (t.c[e] === undefined) {
+            // data not yet in current active tree
+            t.c[e] = { a: [], c: {} };
+        } else if (t.c[e].c === null) {
+            // data has been written out - should not occur in depth-first ordered log data
+            throw Error ("re-occurance of already processed dir");
+        } else if (t.c[e].a === undefined) {
+            // data not loaded yet
+            if (t.c[e].o === undefined) {
+                throw Error ("missing .o in entry");
+            }
+            t.c[e] = await input_db.read_tree (t.c[e].o);
+        }
+        // else already there
+        return t.c[e];
+    }
+
+    // create a node
+    async function add_node (t, e, archive, n) {
+        if (t.c[e] === undefined) {
+            n.a = [ -archive ];
+            t.c[e] = n;
+        } else if (t.c[e] === null) {
+            throw Error ("re-occurance of already processed node");
+        } else {
+            var oldnode;
+            if (t.c[e].a === undefined) {
+                if (t.c[e].o === undefined) {
+                    throw Error ("missing .o in e");
+                }
+                oldnode = await input_db.read_tree (t.c[e].o);
+            } else {
+                oldnode = t.c[e];
+            }
+            t.c[e] = n;
+            n.a = oldnode.a;
+            const last_a = oldnode.a[oldnode.a.length-1];
+            if (last_a === archive || last_a === -archive) {
+                throw Error ('duplicate archive in entry');
+                return;
+            }
+            if (oldnode.s !== n.s || oldnode.t !== n.t || oldnode.l !== n.l) {
+                n.a.push (-archive);
+            } else {
+                n.a.push (archive);
+            }
+        }
+    }
 }
 
 async function read_full_bin_tree (db, offset) {
@@ -277,6 +366,31 @@ async function write_full_bin_tree (db, tree) {
         }
     }
     await db.write_tree (tree);
+    tree.c = null;      // this has been processed (required for incremental add)
+}
+
+async function write_full_bin_tree_incr (input_db, output_db, tree) {
+    // Have to write depth first, to know offsets of children
+    if (tree.c !== undefined) {
+        const keys = Object.keys (tree.c) .sort();
+        for (var e of keys) {
+            if (tree.c[e].c === null) {
+                // already processed
+                continue;
+            } else if (tree.c[e].a === undefined) {
+                // data not loaded yet
+                // tree.c[e].o contains offset to element in input_db
+                if (tree.c[e].o === undefined) {
+                    throw Error ("missing .o in entry");
+                }
+                tree.c[e] = await input_db.read_tree (tree.c[e].o);
+            }
+            await write_full_bin_tree_incr (input_db, output_db, tree.c[e]);
+            // tree.c[e].o now contains offset to element in output_db after output_db.write_tree()
+        }
+    }
+    consolidate_dirs (tree);
+    await output_db.write_tree (tree);
     tree.c = null;      // this has been processed (required for incremental add)
 }
 
@@ -340,10 +454,6 @@ async function end_tree_incr (file, db, offset) {
     console.error (db.cache_buf);
     await db.write_flush ();
     await db.close ();
-}
-
-async function add_archive_incr (name, nr, input_db, output_db) {
-
 }
 
 
@@ -418,8 +528,7 @@ async function main () {
             }
             for (const e of Object.keys (obj_archives) .sort()) {
                 console.error ('adding archive '+obj_archives[e]+' as '+e);
-                await read_tree (obj_archives[e], archives.length);
-                archives.push (e);
+                await add_full_archive (obj_archives[e], e, tree);
             }
         } else {
 
@@ -449,8 +558,7 @@ async function main () {
                 }
                 else if (name[1] == '+') {
                     // add archive
-                    await read_tree (name[2], archives.length);
-                    archives.push (name[5]);
+                    await add_full_archive (name[2], name[5], tree);
                 }
             }
         }
@@ -506,7 +614,7 @@ async function main () {
             // add archive
             archives.push (name[5]);
             output_db = await create_tree_incr (datafile+".new", archives);
-            await add_archive_incr (name[2], archives.length, input_db, output_db);
+            await add_archive_incr (name[2], name[5], archives.length-1, input_db, output_db);
             await end_tree_incr (datafile+".new", output_db, tree.o);
             await fs_p.rename (datafile+".new", datafile);
         }
