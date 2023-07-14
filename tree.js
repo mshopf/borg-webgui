@@ -480,9 +480,7 @@ async function main () {
     if (! mode) {
         // TODO: loop over all data in config.js
         console.error ('Usage: cmd -m datafile.[json[.bz2]|.bin]|- /regex|(-|+)archive[.bz2] [...]');
-        console.error ('       cmd -i BACKUP-data-tree.bin|- (-|+)archive[.bz2]');
-        console.error ('       cmd -a BACKUP-data-tree.bin|- /regex | [(-|+)archive[.bz2]] [...]');
-        console.error ('       cmd -p BACKUP-data-tree.bin|- /regex | [(-|+)archive[.bz2]] [...]');
+        console.error ('       cmd -[iap] BACKUP-data-tree.bin|- /regex | [(-|+)archive[.bz2]] [...]');
         console.error ('-m: in-memory tree building  -i: incremental build (single)  -a: incremental build (all, looping)  -p: in-memory print');
         console.error ('/regex: reads in borg list and determines added/removed archives automatically');
         console.error ('-archive_name: removes archive  +archive_file[.bz2]: adds archive   (multiple possible)');
@@ -594,7 +592,31 @@ async function main () {
     } else if (mode === '-i') {
 
         console.error (files[0]);
-        const name = files[0]?.match (/^([-+])((.*\/)?([^\/]*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
+        var name = null;
+        if (files[0] && files[0][0] === '/' && files.length === 1) {
+            // walk backwards (removing an archive shifts everything after it back)
+            // archives[0] is always null
+            for (var nr = archives.length-1; nr > 0; nr--) {
+                var n = archives[nr];
+                if (obj_archives [n] === undefined) {
+                    console.error ('purging archive '+n);
+                    name = [ ,'-',,,, n ];
+                    break;
+                }
+                delete obj_archives[n];
+            }
+            if (name == null) {
+                for (const e of Object.keys (obj_archives) .sort()) {
+                    console.error ('adding archive '+obj_archives[e]+' as '+e);
+                    name = [ ,'+', obj_archives[e],,, e ];
+                    break;
+                }
+            }
+        }
+        else
+        {
+            name = files[0]?.match (/^([-+])((.*\/)?([^\/]*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
+        }
         if (name == null) {
             console.error ("copying archive ");
             output_db = await create_tree_incr (datafile+".new", archives);
