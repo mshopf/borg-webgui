@@ -5,6 +5,10 @@ rm -f borg-backup-data-tree.bin m4-data-tree.bin m2-?-data-tree.bin i2-?-data-tr
 node ./tree.js -m - +data/zuse2-%-2022-01-31-023001.bz2 +data/zuse2-%-2023-01-31-023001.bz2 +data/zuse2-%-2023-05-27-023001.bz2 +data/zuse2-%-2023-05-28-023001.bz2
 mv -f borg-backup-data-tree.bin m4-data-tree.bin
 
+if [ "x$1" = x0 ] ; then
+    exit 0
+fi
+
 if [ "x$1" = x1 -o "x$1" = x ] ; then
 
     node ./tree.js -i -                         +data/zuse2-%-2022-01-31-023001.bz2
