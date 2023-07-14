@@ -1,6 +1,11 @@
 var archives = [];
 var tree     = {};
 
+// Restore up to 1000 files/dirs with up to 100 MB without asking again
+const MAX_RESTORE_ENTRIES_TRIVIAL = 1000;
+const MAX_RESTORE_SIZE_TRIVIAL    = 100 * 1024 * 1024;
+var   selected_count = 0, selected_size = 0;
+
 const urlParams = new URLSearchParams(window.location.search);
 const backup    = urlParams.get ('backup');
 const backupurl = encodeURIComponent (backup);
@@ -10,6 +15,7 @@ const html_root          = document.getElementById ('root');
 const html_backup        = document.getElementById ('backup');
 const html_button        = document.getElementById ('button');
 const html_possibilities = document.getElementById ('possibilities');
+const html_selectionstats= document.getElementById ('selectionstats');
 
 html_backup.innerHTML = escapeHtml (backup);
 html_button.addEventListener ('click', initiate_restore);
@@ -98,7 +104,7 @@ async function update_list (root, tree) {
         }
         entries.push (t.i);
         html += `<li id=${t.i}>`;
-        html += `<div class="${get_selection_classes(t.y)}"><span>${arToDescr (t.a, 5) .join (' ')}</span></div><div class="${get_disclosure_classes(t)}">`;
+        html += `<div class="${get_selection_classes(t.y)}"><span>${arToDescr (t.a, 5) .join (' ')}</span></div><div class="${get_disclosure_classes(t)}"><div class=sizes>${sizesToDescr (t)}</div>`;
 
         if (e.startsWith ('/')) {
             html += escapeHtml (e.slice(1));
@@ -109,7 +115,7 @@ async function update_list (root, tree) {
             html += " &rarr; " + escapeHtml (t.l);
         }
 
-        html += '</div><div class=sub></div></li>';
+        html += '<span class=pathright></div><div class=sub></div></li>';
     }
     html += '</ul>';
     root.innerHTML = html;
@@ -162,6 +168,15 @@ function arToDescr (array, maxSize) {
         ar .push ('(none available)');
     }
     return ar;
+}
+
+function sizesToDescr (t) {
+    const s = t.S !== undefined ? t.S : t.s !== undefined ? t.s : 0;
+    return (t.C !== undefined && t.C > 0 ? `#${t.C} - ` : '') + (
+        s >= 1073741824 ? Math.floor(s/107374182.4)/10 + 'GB' :
+        s >= 1048576 ? Math.floor(s/104857.6)/10 + 'MB' :
+        s >= 1024 ? Math.floor(s/102.4)/10 + 'kB' : s + 'B'
+       );
 }
 
 function get_disclosure_classes (t) {
@@ -246,15 +261,18 @@ function toggle_entry (evt) {
     }
     set_selection_up   (t, t.y);
     set_selection_down (t, t.y);
-    const ar = find_available_archives (tree, null);
+    var ar;
+    [ar, selected_count, selected_size] = find_available_archives (tree, null);
+    html_selectionstats.innerHTML = 'Selected elements: '+sizesToDescr ({ C: selected_count, S: selected_size });
     if (ar == null || ar.length == 0) {
         html_button.disabled = true;
+        html_selectionstats.innerHTML = '';
         html_possibilities.innerHTML = arToDescr (ar, 1);
     } else {
         html_button.disabled = true;
-        html_possibilities.innerHTML = arToDescr (ar, 8) .reduce (
-             (res, e, i) => `${res}<input type=radio name=ar value=${ar[i]}>${e} - `, '')
-            .slice (0, -3);
+        html_possibilities.innerHTML = arToDescr (ar, 20) .reduce (
+             (res, e, i) => `${res}<div style="display:inline-block"><input type=radio name=ar value=${ar[i]}>${e} -</div> `, '')
+            .slice (0, -9) + '</div>';
         html_possibilities.querySelectorAll ('input') .forEach ((e) => e.addEventListener ('click', toggle_select));
     }
 }
@@ -263,21 +281,27 @@ function toggle_select () {
     html_button.disabled = false;
 }
 
-// return available archives for selected backup set
+// return available archives for selected backup set, and count and size
 function find_available_archives (t, ar) {
     // Endpoint - either single file or fully to be restored dir
     if (t.y === true) {
-        return merge_ar (ar, t.a?.length > 0 ? t.a : null);
+        return [merge_ar (ar, t.a?.length > 0 ? t.a : null),
+                t.C !== undefined ? t.C : 1,
+                t.S !== undefined ? t.S : t.s !== undefined ? t.s : 0];
     }
     // Nothing to restore below
     if (t.y === undefined) {
-        return ar;
+        return [ar, 0, 0];
     }
     // Descend if anything below
+    var count = 1, size = 0;
     for (const e in t.c) {
-        ar = merge_ar (ar, find_available_archives (t.c[e], ar));
+        const [a, c, s] = find_available_archives (t.c[e], ar);
+        ar = merge_ar (ar, a);
+        count += c;
+        size  += s;
     }
-    return ar;
+    return [ar, count, size];
 }
 function merge_ar (ar, todo) {
     var new_ar = [];
@@ -335,7 +359,8 @@ async function initiate_restore () {
         return;
     }
     const name = archives[Math.abs(ar)].name;
-    if (confirm (`Are you sure to start the restore process on the selected files from archive ${name}?`)) {
+    if ((selected_count <= MAX_RESTORE_ENTRIES_TRIVIAL && selected_size <= MAX_RESTORE_SIZE_TRIVIAL) ||
+        confirm (`Are you REALLY sure to start the restore process on the selected files from archive ${name}?\n\nYou will be restoring\n... ${selected_count} elements\nwith a total size of\n... ${sizesToDescr({S: selected_size})}\n\n- which is quite a lot!!!`)) {
         const list = [];
         find_end_paths (tree, '', list);
         obj = { archive: name, list: list.sort() };

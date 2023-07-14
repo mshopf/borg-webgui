@@ -7,6 +7,10 @@
         float: right;
         margin: 10px;
     }
+    .comment {
+        color: gray;
+        font-size: 80%;
+    }
     #root>ul>li {
         width: 50%;
         box-sizing: border-box;
@@ -21,14 +25,24 @@
         padding-left: 20px;
     }
     .path {
+        font-size: 16px;
+        height: 20px;
         padding-left: 20px;
         overflow: hidden;
         white-space: nowrap;
         background-repeat:no-repeat;
         background-position:left top;
     }
-    li:hover>.path, li:hover>.entry {
+    li:hover>.path, li:hover>.entry, li:hover>div>.sizes {
         background-color: #e0e0e0;
+    }
+    .sizes {
+        font-size: 12px;
+        position: relative;
+        float: right;
+        background-color: white;
+        color: gray;
+        padding: 3px 20px 3px 5px;
     }
     .path.dir {
         background-image:url('tri_r.png');
@@ -40,7 +54,7 @@
         position: absolute;
         right: 0;
         width: 50%;
-        height: 1.2em;
+        height: 20px;
         box-sizing: border-box;
         padding-left: 20px;
         margin-left: 2px;
@@ -50,7 +64,7 @@
     }
     .entry span {
         color: gray;
-        font-size: 90%;
+        font-size: 14px;
     }
     .entry.selected {
         background-image:url('q_b.png');
@@ -59,12 +73,17 @@
         background-image:url('q_g.png');
     }
     .buttonbox {
-        text-align: center;
         background-color: #f0f0f0;
         border: 2px solid gray;
         padding: 10px;
         margin: 5px 0;
-        height: 3em;
+        min-height: 3em;
+    }
+    .buttonbox input[type=button] {
+        background-color: #8090ff;
+    }
+    .buttonbox input[type=button][disabled] {
+        background-color: #e0e0e0;
     }
     #possibilities {
         margin-top: 5px;
@@ -73,8 +92,9 @@
 </head><body>
     <img class=logo src=borg.png>
     <h3><a href=/>&lt; back</a> &nbsp; Backup of <span id=backup></span></h3>
-    <div class=buttonbox><input type=button value="Restore selected elements" id=button disabled><div id=possibilities></div></div>
+    <div class=comment>Note: number of entries (#) and sizes are maximum estimations</div>
+    <div class=buttonbox><input type=button value="Restore" id=button disabled> <span id=selectionstats></span><div id=possibilities></div></div>
     <!-- root level entry div to have the system some (hidden) entry to find and change -->
-    <div id=0><div class=entry></div><div class=path></div><div class=sub id=root></div></div>
+    <div id=0><div class=sub id=root></div></div>
     <script src=listing.js></script>
     </body></html>
