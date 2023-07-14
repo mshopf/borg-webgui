@@ -167,14 +167,15 @@ async function read_tree (file, archive, tree, _find_tree, _add_tree, _add_node)
         }
         const path = "/" + obj.path;
         const last_index = path.lastIndexOf ('/');
-        if (last_index !== last_path.length) {
+        const check_path = path.slice (0, last_index);
+        if (last_path !== check_path) {
             // There has been a dir entry missing in input (shouldn't occur), or we switched directory level
-            last_path = path.slice (0, last_index);
-            last_tree = await _find_tree (tree, last_path, archive);
+            last_tree = await _find_tree (tree, check_path, archive);
+            last_path = check_path;
         }
         // directory entry?
         if (obj.type === 'd') {
-            const dir_name = path.slice (last_path.length);
+            const dir_name = path.slice (last_index);
             last_path = path;
             last_tree = await _add_tree (last_tree, dir_name, archive);
             continue;
