@@ -29,7 +29,7 @@ function walk_tree (tree, path, level=0) {
 
 // update directory entries
 function consolidate_dirs (tree) {
-    if (tree.c === undefined) {
+    if (tree.c == null) {
         return tree.a;
     }
     // TODO? creates directory data afresh - reuse known data?
@@ -206,6 +206,9 @@ async function read_tree (file, archive) {
         terminal: false
     });
 
+    var last_tree = tree;
+    var last_path = '';
+
     for await (const line of rl) {
         const obj = JSON.parse (line);
         if (obj.path === '.') {
@@ -274,9 +277,10 @@ async function write_full_bin_tree (db, tree) {
         }
     }
     await db.write_tree (tree);
+    tree.c = null;      // this has been processed (required for incremental add)
 }
 
-var archives, tree, input_db, output_db, last_tree, last_path;
+var archives, tree, input_db, output_db;
 
 function streamToString (stream) {
     const chunks = [];
@@ -368,8 +372,6 @@ async function main () {
         console.error ('fresh start, creating new backup-data');
         archives = [ null ];
         tree = { a:[], c:{} };
-        last_tree = tree;
-        last_path = '';
     } else {
         if (mode === '-m' || mode === '-p') {
             console.error ('Reading original data '+datafile);
@@ -378,16 +380,12 @@ async function main () {
                 [ archives, tree, db ] = await open_tree_incr (datafile);
                 tree = await read_full_bin_tree (db, tree.o);
                 await db.close ();
-                last_tree = tree;
-                last_path = '';
             } catch (e) {
                 console.error ('Reading data: '+e.stack);
                 return;
             }
         } else {
             [ archives, tree, input_db ] = await open_tree_incr (datafile);
-            last_tree = tree;
-            last_path = '';
         }
     }
 
@@ -460,6 +458,7 @@ async function main () {
         consolidate_dirs (tree);
 
         if (mode === '-p') {
+            console.log (JSON.stringify (archives, null, 4));
             console.log (JSON.stringify (tree, null, 4));
         } else {
             output_db = await create_tree_incr (datafile+'.new', archives);
@@ -522,9 +521,10 @@ main().catch ((e) => console.error ('* '+e.stack));
 
 // Data structure:
 // Object: a "Archives" - Array of archive names TBC
-//         c "Children" - keys are dir/file names
+//         c "Children" - keys are dir/file names ; null for already saved dirs (incremental only)
 //         s "Size"  t "mTime"  l "link" of last added archive
 //         c available on dirs, s and t on files, l on links
+//         o offset to structure on disk
     //{"type": "d", "mode": "drwxr-xr-x", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig", "healthy": true, "source": "", "linktarget": "", "flags": 0, "isomtime": "2022-01-24T16:33:10.461280", "size": 0}
     //{"type": "-", "mode": "-rw-r--r--", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig/64bit_strstr_via_64bit_strstr_sse2_unaligned", "healthy": true, "source": "", "linktarget": "", "flags": 0, "isomtime": "2021-11-15T19:29:28.000000", "size": 0}
     //{"type": "l", "mode": "lrwxrwxrwx", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig/grub", "healthy": true, "source": "../default/grub", "linktarget": "../default/grub", "flags": 0, "isomtime": "2022-01-12T16:23:39.000000", "size": 15}
