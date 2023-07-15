@@ -162,7 +162,9 @@ async function read_tree (file, archive, tree, _find_tree, _add_tree, _add_node)
             stream = stream.pipe (bz2());
         }
     } else {
-        child = cp.spawn ('borg', ['list', '--format', '"{type} {path} {size} {isomtime}"', '--json-lines', config.borg_repo+'::'+file]);
+        const cmdargs = ['list', '--format', '"{type} {path} {size} {isomtime}"', '--json-lines', config.borg_repo+'::'+file];
+        console.error ('* borg ' + cmdargs.join (' '));
+        child = cp.spawn ('borg', cmdargs);
         stream = child.stdout;
     }
 
@@ -519,6 +521,7 @@ async function main () {
         var obj_archives = {};
         console.error ('reading borg archive list');
         const filter = new RegExp (files[0].slice(1));
+        console.error ('* borg list --json '+config.borg_repo);
         const json = JSON.parse (await call_command ('borg', ['list', '--json', config.borg_repo]));
         for (const e of json.archives) {
             const name = e.name.match (/^((.*\/)?([^\/]*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
