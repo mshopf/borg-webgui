@@ -487,7 +487,7 @@ async function main () {
         console.error ('-i: work in progress   -a: NOT IMPLEMENTED YET');
         process.exit (1);
     }
-    if (mode !== '-m' && mode !== '-i' /* && mode !== '-a' */ && mode !== '-p') {
+    if (mode !== '-m' && mode !== '-i' && mode !== '-a' && mode !== '-p') {
         console.error ('bad mode '+mode);
         process.exit (1);
     }
@@ -514,8 +514,9 @@ async function main () {
     }
 
     // parse borg list of archives if wanted
-    const obj_archives = { };
+    var obj_archives = null;
     if (files[0] && files[0][0] === '/' && files.length === 1) {
+        var obj_archives = {};
         console.error ('reading borg archive list');
         const filter = new RegExp (files[0].slice(1));
         const json = JSON.parse (await call_command ('borg', ['list', '--json', config.borg_repo]));
@@ -528,7 +529,7 @@ async function main () {
     }
 
     if (mode === '-m' || mode === '-p') {
-        if (files[0] && files[0][0] === '/' && files.length === 1) {
+        if (obj_archives !== null) {
             // walk backwards (removing an archive shifts everything after it back)
             // archives[0] is always null
             for (var nr = archives.length-1; nr > 0; nr--) {
@@ -589,26 +590,36 @@ async function main () {
             await fs_p.rename (datafile+".new", datafile);
         }
 
-    } else if (mode === '-i') {
-
+    } else if (mode === '-i' || mode === '-a') {
         console.error (files[0]);
         var name = null;
-        if (files[0] && files[0][0] === '/' && files.length === 1) {
+        if (obj_archives !== null) {
             // walk backwards (removing an archive shifts everything after it back)
             // archives[0] is always null
             for (var nr = archives.length-1; nr > 0; nr--) {
                 var n = archives[nr];
                 if (obj_archives [n] === undefined) {
-                    console.error ('purging archive '+n);
-                    name = [ ,'-',,,, n ];
-                    break;
+                    console.error (`removing archive ${n} (#${nr})`);
+                    archives.splice (nr, 1);
+                    output_db = await create_tree_incr (datafile+".new", archives);
+                    await remove_archive_incr (tree, nr, input_db, output_db);
+                    await end_tree_incr (datafile+".new", output_db, tree.o);
+                    await fs_p.rename (datafile+".new", datafile);
+                    if (mode === '-i') {
+                        obj_archives = {};
+                        break;
+                    }
                 }
                 delete obj_archives[n];
             }
-            if (name == null) {
-                for (const e of Object.keys (obj_archives) .sort()) {
-                    console.error ('adding archive '+obj_archives[e]+' as '+e);
-                    name = [ ,'+', obj_archives[e],,, e ];
+            for (const e of Object.keys (obj_archives) .sort()) {
+                archives.push (e);
+                console.error ('adding archive '+obj_archives[e]+' as '+e+' (#'+archives.length-1+')');
+                output_db = await create_tree_incr (datafile+".new", archives);
+                await add_archive_incr (obj_archives[e], e, archives.length-1, input_db, output_db);
+                await end_tree_incr (datafile+".new", output_db, tree.o);
+                await fs_p.rename (datafile+".new", datafile);
+                if (mode === '-i') {
                     break;
                 }
             }
@@ -616,44 +627,46 @@ async function main () {
         else
         {
             name = files[0]?.match (/^([-+])((.*\/)?([^\/]*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
-        }
-        if (name == null) {
-            console.error ("copying archive ");
-            output_db = await create_tree_incr (datafile+".new", archives);
-            await write_full_bin_tree_incr (input_db, output_db, tree);
-            await end_tree_incr (datafile+".new", output_db, tree.o);
-            await fs_p.rename (datafile+".new", datafile);
-        }
-        else if (name[1] == null) {
-            console.error ("* does not match parameter pattern");
-            return;
-        }
-        else if (name[1] == '-') {
-            // remove archive
-            var nr;
-            for (nr = 1; nr < archives.length; nr++) {
-                if (name[5] === archives[nr]) {
-                    break;
+            if (name == null) {
+                console.error ("copying archive ");
+                output_db = await create_tree_incr (datafile+".new", archives);
+                await write_full_bin_tree_incr (input_db, output_db, tree);
+                await end_tree_incr (datafile+".new", output_db, tree.o);
+                await fs_p.rename (datafile+".new", datafile);
+            }
+            else if (name[1] == null) {
+                console.error ("* does not match parameter pattern");
+                return;
+            }
+            else if (name[1] == '-') {
+                // remove archive
+                var nr;
+                for (nr = 1; nr < archives.length; nr++) {
+                    if (name[5] === archives[nr]) {
+                        break;
+                    }
                 }
+                if (nr >= archives.length) {
+                    console.error ('* not part of archives: '+name[5]);
+                    process.exit  (1);
+                }
+                console.error (`removing archive ${name[5]} (#${nr})`);
+                console.error ("removing archive "+nr);
+                archives.splice (nr, 1);
+                output_db = await create_tree_incr (datafile+".new", archives);
+                await remove_archive_incr (tree, nr, input_db, output_db);
+                await end_tree_incr (datafile+".new", output_db, tree.o);
+                await fs_p.rename (datafile+".new", datafile);
             }
-            if (nr >= archives.length) {
-                console.error ('* not part of archives: '+name[5]);
-                process.exit  (1);
+            else if (name[1] == '+') {
+                // add archive
+                archives.push (name[5]);
+                console.error ('adding archive '+name[5]+' as '+name[2]+' (#'+archives.length-1+')');
+                output_db = await create_tree_incr (datafile+".new", archives);
+                await add_archive_incr (name[2], name[5], archives.length-1, input_db, output_db);
+                await end_tree_incr (datafile+".new", output_db, tree.o);
+                await fs_p.rename (datafile+".new", datafile);
             }
-            console.error ("removing archive "+nr);
-            archives.splice (nr, 1);
-            output_db = await create_tree_incr (datafile+".new", archives);
-            await remove_archive_incr (tree, nr, input_db, output_db);
-            await end_tree_incr (datafile+".new", output_db, tree.o);
-            await fs_p.rename (datafile+".new", datafile);
-        }
-        else if (name[1] == '+') {
-            // add archive
-            archives.push (name[5]);
-            output_db = await create_tree_incr (datafile+".new", archives);
-            await add_archive_incr (name[2], name[5], archives.length-1, input_db, output_db);
-            await end_tree_incr (datafile+".new", output_db, tree.o);
-            await fs_p.rename (datafile+".new", datafile);
         }
     }
 
