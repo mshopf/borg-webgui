@@ -591,7 +591,7 @@ async function main () {
         }
 
     } else if (mode === '-i' || mode === '-a') {
-        console.error (files[0]);
+        console.error ('processing '+files[0]);
         var name = null;
         if (obj_archives !== null) {
             // walk backwards (removing an archive shifts everything after it back)
@@ -599,12 +599,17 @@ async function main () {
             for (var nr = archives.length-1; nr > 0; nr--) {
                 var n = archives[nr];
                 if (obj_archives [n] === undefined) {
+                    if (tree == null) {
+                        [ archives, tree, input_db ] = await open_tree_incr (datafile);
+                    }
                     console.error (`removing archive ${n} (#${nr})`);
                     archives.splice (nr, 1);
                     output_db = await create_tree_incr (datafile+".new", archives);
                     await remove_archive_incr (tree, nr, input_db, output_db);
                     await end_tree_incr (datafile+".new", output_db, tree.o);
                     await fs_p.rename (datafile+".new", datafile);
+                    input_db.close ();
+                    tree = null;
                     if (mode === '-i') {
                         obj_archives = {};
                         break;
@@ -613,12 +618,17 @@ async function main () {
                 delete obj_archives[n];
             }
             for (const e of Object.keys (obj_archives) .sort()) {
+                if (tree == null) {
+                    [ archives, tree, input_db ] = await open_tree_incr (datafile);
+                }
                 archives.push (e);
-                console.error ('adding archive '+obj_archives[e]+' as '+e+' (#'+archives.length-1+')');
+                console.error (`adding archive ${obj_archives[e]} as ${e} (#${archives.length-1})`);
                 output_db = await create_tree_incr (datafile+".new", archives);
                 await add_archive_incr (obj_archives[e], e, archives.length-1, input_db, output_db);
                 await end_tree_incr (datafile+".new", output_db, tree.o);
                 await fs_p.rename (datafile+".new", datafile);
+                input_db.close ();
+                tree = null;
                 if (mode === '-i') {
                     break;
                 }
@@ -626,6 +636,7 @@ async function main () {
         }
         else
         {
+            // TODO loop over paramters
             name = files[0]?.match (/^([-+])((.*\/)?([^\/]*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
             if (name == null) {
                 console.error ("copying archive ");
@@ -651,7 +662,6 @@ async function main () {
                     process.exit  (1);
                 }
                 console.error (`removing archive ${name[5]} (#${nr})`);
-                console.error ("removing archive "+nr);
                 archives.splice (nr, 1);
                 output_db = await create_tree_incr (datafile+".new", archives);
                 await remove_archive_incr (tree, nr, input_db, output_db);
@@ -661,7 +671,7 @@ async function main () {
             else if (name[1] == '+') {
                 // add archive
                 archives.push (name[5]);
-                console.error ('adding archive '+name[5]+' as '+name[2]+' (#'+archives.length-1+')');
+                console.error (`adding archive ${name[5]} as ${name[2]} (#${archives.length-1})`);
                 output_db = await create_tree_incr (datafile+".new", archives);
                 await add_archive_incr (name[2], name[5], archives.length-1, input_db, output_db);
                 await end_tree_incr (datafile+".new", output_db, tree.o);
