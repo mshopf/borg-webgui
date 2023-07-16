@@ -610,7 +610,7 @@ async function main () {
                     await remove_archive_incr (tree, nr, input_db, output_db);
                     await end_tree_incr (datafile+".new", output_db, tree.o);
                     await fs_p.rename (datafile+".new", datafile);
-                    input_db.close ();
+                    await input_db.close ();
                     tree = null;
                     if (mode === '-i') {
                         obj_archives = {};
@@ -629,7 +629,7 @@ async function main () {
                 await add_archive_incr (obj_archives[e], e, archives.length-1, input_db, output_db);
                 await end_tree_incr (datafile+".new", output_db, tree.o);
                 await fs_p.rename (datafile+".new", datafile);
-                input_db.close ();
+                await input_db.close ();
                 tree = null;
                 if (mode === '-i') {
                     break;

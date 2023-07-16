@@ -28,8 +28,8 @@ class DBuffer {
         this.file_currentoffset = initial_pos;
         this.cache_buf_write = 0;
     }
-    close () {
-        this.fh.close();
+    async close () {
+        return this.fh.close();
     }
     //
     // WRITE INTERFACE

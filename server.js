@@ -86,6 +86,23 @@ async function continue_read_borg_log () {
     }
 }
 
+
+var watching_tree = {}, watcher_tree = {};
+function setup_watch_tree (name) {
+    watching_tree[name] ??= 0;
+    watcher_tree[name]?.close ();
+    watcher_tree[name] = fs.watch (trees[name].file, { persistant: false }, async function (evt) {
+        console.log ('borg_backup_tree watch @'+evt);
+        // file renamed / overwritten, restart watcher
+        if (evt === 'rename') {
+            setup_watch_tree (name);
+        }
+        // we can get multiple events for one change. due to promises these might run in "parallel"
+        if (++watching_tree[name] === 1) {
+            do {
+                await openTree (trees[name]);
+            } while (watching_tree[name] = watching_tree[name] > 1 ? 1 : 0);    // if (at least) another one in flight, start again
+        }
     });
 }
 
@@ -95,7 +112,11 @@ async function openTree (conf) {
         throw Error (conf.file+' does not match file pattern');
     }
 
-    console.error ('Opening data '+name[2]);
+    if (conf.db) {
+        await conf.db.close();
+    }
+
+    console.error ('Opening data '+name[2]+': '+conf.file);
     const fh = await fs_p.open (conf.file, 'r');
     const db = new DBuffer (fh);
     await db.read_at (0);
@@ -107,13 +128,16 @@ async function openTree (conf) {
     const archives = await db.read_archives (0x20);
     const tree     = await db.read_tree     (offset);
 
-    trees[name[2]] = { archives, db, offset, tree, cache: {}, ...conf };
+    console.error ('Done reading '+name[2]+': '+JSON.stringify (archives));
+    trees[name[2]] = { ...conf, archives, db, offset, tree, cache: {} };
+    return name[2];
 }
 
 async function openAll () {
     for (const f of config.data) {
         try {
-            await openTree (f);
+            const name = await openTree (f);
+            setup_watch_tree (name);
         } catch (e) {
             console.error ('opening '+f.file+': '+e.stack);
         }
@@ -121,6 +145,9 @@ async function openAll () {
     console.log ('All data opened successfully');
     console.log ('Memory Usage: '+ process.memoryUsage().heapUsed/(1024*1024) + ' MB');
 }
+// data will only be available after it has been successfully loaded
+// await is not available outside async
+openAll ();
 
 // Middleware for checking passwords
 async function check_passwd (req, res, next) {
@@ -139,8 +166,6 @@ async function check_passwd (req, res, next) {
 }
 
 
-// data will only be available after it has been successfully loaded
-openAll ();
 
 config.hook_preroutes?. (app);
 app.use (express.json ());
