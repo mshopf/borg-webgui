@@ -11,6 +11,7 @@ const backup    = urlParams.get ('backup');
 const backupurl = encodeURIComponent (backup);
 const days      = [ 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday' ];
 
+const html_body          = document.getElementsByTagName ('body')[0];
 const html_root          = document.getElementById ('root');
 const html_backup        = document.getElementById ('backup');
 const html_button        = document.getElementById ('button');
@@ -20,6 +21,7 @@ const html_selectionstats= document.getElementById ('selectionstats');
 html_backup.innerHTML = escapeHtml (backup);
 html_button.addEventListener ('click', initiate_restore);
 
+html_body.className = 'wait';
 fetch ('/api/archives/'+backupurl, { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }})
 .then (res => res.json())
 .then (json => {
@@ -32,6 +34,7 @@ fetch ('/api/archives/'+backupurl, { headers : { 'Content-Type': 'application/js
     tree.y = false;
     refs[0] = tree;
     update_list (html_root, tree);
+    html_body.className = '';
 });
 
 function escapeHtml(x) {
@@ -85,6 +88,7 @@ async function update_list (root, tree) {
                 }
             }
         }
+        html_body.className = 'wait';
         const response = await fetch ('/api/data/' + backupurl + encodeURI (path),
                                       { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }});
         tree.c = (await response .json ()) .c;
@@ -93,6 +97,7 @@ async function update_list (root, tree) {
                 tree.c[e].y = true;
             }
         }
+        html_body.className = '';
     }
     var entries = [];
     const props = Object.keys (tree.c) .sort ((a,b) => (a[0]=='/'?a.slice(1):a).localeCompare (b[0]=='/'?b.slice(1):b) );
@@ -365,15 +370,18 @@ async function initiate_restore () {
         find_end_paths (tree, '', list);
         obj = { archive: name, list: list.sort() };
         try {
+            html_body.className = 'wait';
             const response = await fetch ('/api/restore/' + backupurl,
                                           {   method: 'POST',
                                               headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' },
                                               body: JSON.stringify (obj)
                                           });
             await response.json();
+            html_body.className = 'wait';
             history.back();
         } catch (e) {
             confirm ('Error: ' + e.message);
+            html_body.className = '';
         }
     }
 }
