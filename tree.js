@@ -155,7 +155,7 @@ async function remove_archive_incr (tree, nr, input_db, output_db) {
 
 async function read_tree (file, archive, tree, _find_tree, _add_tree, _add_node) {
 
-    var stream, child;
+    var stream, child_promise;
     if (file.match (/(\.json|\.bz2)$/)) {
         stream = fs.createReadStream (file);
         if (file.slice (-4) === ".bz2") {
@@ -164,7 +164,10 @@ async function read_tree (file, archive, tree, _find_tree, _add_tree, _add_node)
     } else {
         const cmdargs = ['list', '--format', '"{type} {path} {size} {isomtime}"', '--json-lines', config.borg_repo+'::'+file];
         console.error ('* borg ' + cmdargs.join (' '));
-        child = cp.spawn ('borg', cmdargs);
+        const child = cp.spawn ('borg', cmdargs, { stdio: ['ignore', 'pipe', 'inherit'] });
+        child_promise = new Promise ( (resolve, reject) => {
+            child.on ('close', resolve);
+        });
         stream = child.stdout;
     }
 
@@ -213,16 +216,10 @@ async function read_tree (file, archive, tree, _find_tree, _add_tree, _add_node)
 
     console.error ("Memory Usage: "+ process.memoryUsage().heapUsed/(1024*1024) + " MB");
 
-    if (child !== undefined) {
-        var error = "";
-        for await (const chunk of child.stderr) {
-            error += chunk;
-        }
-        const exitCode = await new Promise ( (resolve, reject) => {
-            child.on ('close', resolve);
-        });
+    if (child_promise !== undefined) {
+        const exitCode = await child_promise;
         if (exitCode) {
-            throw new Error( `subprocess error exit ${exitCode}, ${error}`);
+            throw new Error( `subprocess error exit ${exitCode}`);
         }
     }
 
