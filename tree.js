@@ -469,7 +469,6 @@ async function end_tree_incr (file, db, offset) {
     // Write to slot at beginning of file
     db.write_buf (DBuffer.INIT_TAG_BUF);
     db.write_uvs (offset);
-    console.error (db.cache_buf);
     await db.write_flush ();
     await db.close ();
 }
