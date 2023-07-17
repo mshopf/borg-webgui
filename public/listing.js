@@ -177,10 +177,18 @@ function arToDescr (array, maxSize) {
 
 function sizesToDescr (t) {
     const s = t.S !== undefined ? t.S : t.s !== undefined ? t.s : 0;
-    return (t.C !== undefined && t.C > 0 ? `#${t.C} - ` : '') + (
-        s >= 1073741824 ? Math.floor(s/107374182.4)/10 + 'GB' :
-        s >= 1048576 ? Math.floor(s/104857.6)/10 + 'MB' :
-        s >= 1024 ? Math.floor(s/102.4)/10 + 'kB' : s + 'B'
+    const c = t.C !== undefined ? t.C : 0;
+    return (
+            c > 1000000        ? `#${Math.floor(c/100000)/10}M - ` :
+            c > 1000           ? `#${Math.floor(c/100)/10}k - ` :
+            c > 0              ? `#${c} - ` :
+            ''
+        ) + (
+            s >= 1099511627776 ? Math.floor(s/109951162777.6)/10 + 'TB' :
+            s >= 1073741824    ? Math.floor(s/107374182.4)/10 + 'GB' :
+            s >= 1048576       ? Math.floor(s/104857.6)/10 + 'MB' :
+            s >= 1024          ? Math.floor(s/102.4)/10 + 'kB' :
+                                 s + 'B'
        );
 }
 
