@@ -174,6 +174,39 @@ function arToDescr (array, maxSize) {
     }
     return ar;
 }
+function arToSelect (array, name) {
+    if (array == null) {
+        return '(none selected)';
+    }
+    var last = 0, count = 0, id = null, long = '';
+    var html = `<select name=${name}>`;
+
+    for (const a of [...array, 1e30]) {
+        if (a == last+1) {
+            last = a;
+            if (id == null) {
+                id = a;
+            }
+            long += '\n' + archives[a].descr;
+            count++;
+        } else {
+            if (count > 0) {
+                var str = escapeHtml (archives[id].short);
+                if (count > 1) {
+                    str += '('+count+')';
+                }
+                html += `<option value="${id}" title="${escapeHtml(long)}">${str}</span>`;
+            }
+            last  = Math.abs(a);
+            id    = last;
+            long  = archives[id]?.descr;
+            count = 1;
+        }
+    }
+    html += '</select>';
+
+    return html;
+}
 
 function sizesToDescr (t) {
     const s = t.S !== undefined ? t.S : t.s !== undefined ? t.s : 0;
@@ -276,17 +309,13 @@ function toggle_entry (evt) {
     set_selection_down (t, t.y);
     var ar;
     [ar, selected_count, selected_size] = find_available_archives (tree, null);
-    html_selectionstats.innerHTML = 'Selected elements: '+sizesToDescr ({ C: selected_count, S: selected_size });
+    html_possibilities.innerHTML = arToSelect (ar, 'ar');
+    html_button.disabled = true;
     if (ar == null || ar.length == 0) {
-        html_button.disabled = true;
         html_selectionstats.innerHTML = '';
-        html_possibilities.innerHTML = arToDescr (ar, 1);
     } else {
-        html_button.disabled = true;
-        html_possibilities.innerHTML = arToDescr (ar, 20) .reduce (
-             (res, e, i) => `${res}<div style="display:inline-block"><input type=radio name=ar value=${ar[i]}>${e} -</div> `, '')
-            .slice (0, -9) + '</div>';
-        html_possibilities.querySelectorAll ('input') .forEach ((e) => e.addEventListener ('click', toggle_select));
+        html_selectionstats.innerHTML = 'Selected elements: '+sizesToDescr ({ C: selected_count, S: selected_size });
+        html_possibilities.querySelector ('select') .addEventListener ('click', toggle_select);
     }
 }
 
@@ -366,7 +395,7 @@ function find_end_paths (t, p, list) {
 }
 
 async function initiate_restore () {
-    const ar = document.querySelector('input[name=ar]:checked').value;
+    const ar = document.querySelector('select[name=ar]').value;
     if (ar == null) {
         console.log ('this should not happen');
         return;
