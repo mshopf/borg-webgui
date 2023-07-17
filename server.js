@@ -179,7 +179,7 @@ express.static.mime.define ({'text/plain': ['log']});
 
 app.get ('/api/status', function (req, res) {
     console.log (`* api/status`);
-    var response = { backups: {}, state: [] };
+    var response = { backups: {}, state: [], config: config.client_config };
     for (const e in trees) {
         response.backups[e] = trees[e].archives.length -1;
     }

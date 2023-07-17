@@ -1,10 +1,9 @@
 var archives = [];
 var tree     = {};
 
-// Restore up to 1000 files/dirs with up to 100 MB without asking again
-const MAX_RESTORE_ENTRIES_TRIVIAL = 1000;
-const MAX_RESTORE_SIZE_TRIVIAL    = 100 * 1024 * 1024;
-var   selected_count = 0, selected_size = 0;
+var selected_count = 0, selected_size = 0;
+// Restore up to that many files/dirs without asking again
+var config = { max_restore_entries_trivial: 1000, max_restore_size_trivial: 100 * 1024 * 1024 };
 
 const urlParams = new URLSearchParams(window.location.search);
 const backup    = urlParams.get ('backup');
@@ -22,7 +21,13 @@ html_backup.innerHTML = escapeHtml (backup);
 html_button.addEventListener ('click', initiate_restore);
 
 html_body.className = 'wait';
-fetch ('/api/archives/'+backupurl, { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }})
+
+fetch ('/api/status', { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }, cache: "no-store"})
+.then (res => res.json())
+.then (json => {
+    config = json.config ?? config;
+    return fetch ('/api/archives/'+backupurl, { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }})
+})
 .then (res => res.json())
 .then (json => {
     archives = parse_archives (json);
@@ -401,7 +406,7 @@ async function initiate_restore () {
         return;
     }
     const name = archives[Math.abs(ar)].name;
-    if ((selected_count <= MAX_RESTORE_ENTRIES_TRIVIAL && selected_size <= MAX_RESTORE_SIZE_TRIVIAL) ||
+    if ((selected_count <= config.max_restore_entries_trivial && selected_size <= config.max_restore_size_trivial) ||
         confirm (`Are you REALLY sure to start the restore process on the selected files from archive ${name}?\n\nYou will be restoring\n... ${selected_count} elements\nwith a total size of\n... ${sizesToDescr({S: selected_size})}\n\n- which is quite a lot!!!`)) {
         const list = [];
         find_end_paths (tree, '', list);

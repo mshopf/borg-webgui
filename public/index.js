@@ -1,5 +1,6 @@
 const html_root  = document.getElementById ('root');
 const html_state = document.getElementById ('state');
+var config = {};
 
 function fetch_status () {
     fetch ('/api/status', { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }, cache: "no-store"})
@@ -7,6 +8,7 @@ function fetch_status () {
     .then (json => {
         update_backups (json.backups);
         update_state   (json.state?.reverse());
+        config = json.config;
     });
 }
 window.onload = fetch_status;
