@@ -166,11 +166,14 @@ async function check_passwd (req, res, next) {
 }
 
 
-
 config.hook_preroutes?. (app);
+
 app.use (express.json ());
 app.use (express.urlencoded ({ extended: true }));
+
 app.use (express.static (path.join (__dirname, 'public')));
+
+app.use ('/log/', check_passwd);
 app.use ('/log/', express.static (path.join (__dirname, 'log')));
 express.static.mime.define ({'text/plain': ['log']});
 
@@ -416,6 +419,7 @@ async function execute_borg_extract (q) {
 
 
 config.hook_postroutes?. (app);
+
 var server;
 if (config.httpPort) {
     if (config.httpsPort) {
