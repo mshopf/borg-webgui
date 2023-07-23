@@ -150,6 +150,9 @@ async function remove_archive_incr (tree, nr, input_db, output_db) {
         }
     }
     await output_db.write_tree (tree);
+    if (tree.c !== undefined) {
+        tree.c = null;      // this has been processed (required for incremental remove)
+    }
 }
 
 
@@ -384,7 +387,9 @@ async function write_full_bin_tree (db, tree) {
         }
     }
     await db.write_tree (tree);
-    tree.c = null;      // this has been processed (required for incremental add)
+    if (tree.c !== undefined) {
+        tree.c = null;      // this has been processed (required for incremental add)
+    }
 }
 
 async function write_full_bin_tree_incr (input_db, output_db, tree) {
@@ -409,7 +414,9 @@ async function write_full_bin_tree_incr (input_db, output_db, tree) {
     }
     consolidate_dirs (tree);
     await output_db.write_tree (tree);
-    tree.c = null;      // this has been processed (required for incremental add)
+    if (tree.c !== undefined) {
+        tree.c = null;      // this has been processed (required for incremental add)
+    }
 }
 
 var archives, tree, input_db, output_db;
