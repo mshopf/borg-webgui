@@ -219,7 +219,7 @@ async function read_tree (file, archive, tree, _find_tree, _add_tree, _add_node)
         await _add_node (last_tree, entry, archive, node);
     }
 
-    console.error ('last line: '+last_line);
+    console.error ('\nlast line: '+last_line);
     console.error ("Memory Usage: "+ process.memoryUsage().heapUsed/(1024*1024) + " MB");
 
     if (child_promise !== undefined) {
