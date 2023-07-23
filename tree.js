@@ -492,7 +492,7 @@ async function main () {
         console.error ('-m: in-memory tree building  -i: incremental build (single)  -a: incremental build (all, looping)  -p: in-memory print');
         console.error ('/regex: reads in borg list and determines added/removed archives automatically');
         console.error ('-archive_name: removes archive  +archive_file[.bz2]: adds archive   (multiple possible)');
-        console.error ('-i: work in progress   -a: NOT IMPLEMENTED YET');
+        console.error ('-a: not implemented for .bz2 archives');
         process.exit (1);
     }
     if (mode !== '-m' && mode !== '-i' && mode !== '-a' && mode !== '-p') {
@@ -617,7 +617,7 @@ async function main () {
                     await remove_archive_incr (tree, nr, input_db, output_db);
                     await end_tree_incr (datafile+".new", output_db, tree.o);
                     await fs_p.rename (datafile+".new", datafile);
-                    await input_db.close ();
+                    await input_db?.close ();
                     tree = null;
                     if (mode === '-i') {
                         obj_archives = {};
@@ -636,7 +636,7 @@ async function main () {
                 await add_archive_incr (obj_archives[e], e, archives.length-1, input_db, output_db);
                 await end_tree_incr (datafile+".new", output_db, tree.o);
                 await fs_p.rename (datafile+".new", datafile);
-                await input_db.close ();
+                await input_db?.close ();
                 tree = null;
                 if (mode === '-i') {
                     break;
@@ -676,6 +676,7 @@ async function main () {
                 await remove_archive_incr (tree, nr, input_db, output_db);
                 await end_tree_incr (datafile+".new", output_db, tree.o);
                 await fs_p.rename (datafile+".new", datafile);
+                await input_db?.close ();
             }
             else if (name[1] == '+') {
                 // add archive
@@ -685,6 +686,7 @@ async function main () {
                 await add_archive_incr (name[2], name[5], archives.length-1, input_db, output_db);
                 await end_tree_incr (datafile+".new", output_db, tree.o);
                 await fs_p.rename (datafile+".new", datafile);
+                await input_db?.close ();
             }
         }
     }
