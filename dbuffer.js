@@ -4,18 +4,20 @@ class DBuffer {
     static DEFAULT_READ_SIZE  = 512;
     static FILE_LENGTH_MAX    = 256;        // limits.h: NAME_MAX
     static PATH_LENGTH_MAX    = 256;        // limits.h: PATH_MAX
-    static CACHE_BUF_MAX      = (1024*1024);
+    static CACHE_BUF_SIZE_STD = (1024*1024);
     static INIT_TAG_BUF       = Buffer.from ('bOt0');
 
     cache_buf_write    = 0;
     cache_buf_pos_read = 0;
     cache_buf_read     = 0;
+    cache_buf_size;
     file_currentoffset;
     fh;
     cache_buf;
 
-    constructor (fh, initial_pos = 0) {
-        this.cache_buf = Buffer.alloc (DBuffer.CACHE_BUF_MAX);
+    constructor (fh, initial_pos = 0, cache_buf_size = DBuffer.CACHE_BUF_SIZE_STD) {
+        this.cache_buf_size = cache_buf_size;
+        this.cache_buf = Buffer.alloc (this.cache_buf_size);
         this.open (fh, initial_pos);
     }
 
@@ -29,6 +31,7 @@ class DBuffer {
         this.cache_buf_write = 0;
     }
     async close () {
+        console.error(); (' done '+(this.file_currentoffset/(1024*1024))+' MB\n');
         return this.fh.close();
     }
     //
@@ -39,13 +42,13 @@ class DBuffer {
     get write_pos() {
         return this.file_currentoffset + this.cache_buf_write;
     }
-    // Move to position in file - currently only forward regarding file, and less than CACHE_BUF_MAX
+    // Move to position in file - currently only forward regarding file, and less than cache_buf_size
     set write_pos (pos) {
         var diff = pos - this.file_currentoffset;
         if (diff < 0) {
             throw Error ('buf_advance_to negative');
         }
-        if (diff >= DBuffer.CACHE_BUF_MAX) {
+        if (diff >= this.cache_buf_size) {
             throw Error ('buf_advance_to beyond cache');
         }
         if (diff > this.cache_buf_write) {
@@ -55,14 +58,14 @@ class DBuffer {
     }
     // check cache for space, write it out if more is required
     async check_flush (required) {
-        if (this.cache_buf_write + required <= DBuffer.CACHE_BUF_MAX) {
+        if (this.cache_buf_write + required <= this.cache_buf_size) {
             return;
         }
         return this.write_flush();
     }
     // Flush cache
     async write_flush () {
-        console.error ('buf_flush at '+this.file_currentoffset);
+        process.stderr.write ('.');
         const len = this.cache_buf_write;
         this.file_currentoffset += len;
         this.cache_buf_write = 0;
@@ -305,8 +308,8 @@ class DBuffer {
             //console.log (`check_avail @${this.file_currentoffset+this.cache_buf_pos_read} for ${required} -> cache`);
             return;
         }
-        if (required > DBuffer.CACHE_BUF_MAX) {
-            throw Error ('more than CACHE_BUF_MAX requested');
+        if (required > this.cache_buf_size) {
+            throw Error ('more than cache_buf_size='+this.cache_buf_size+' requested');
         }
 
         // move unprocessed data to front of buffer

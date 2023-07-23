@@ -459,7 +459,7 @@ async function open_tree_incr (file) {
 
 async function create_tree_incr (file, archives) {
     var fh = await fs_p.open (file, 'w', 0o644);
-    var db = new DBuffer (fh);
+    var db = new DBuffer (fh, 0, 20 * 1024 * 1024);
     db.write_pos = 0x20;
     await db.write_archives (archives);
     return db;
