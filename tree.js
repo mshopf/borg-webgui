@@ -164,7 +164,7 @@ async function read_tree (file, archive, tree, _find_tree, _add_tree, _add_node)
         }
     } else {
         const cmdargs = ['list', '--format', '"{type} {path} {size} {isomtime}"', '--json-lines', config.borg_repo+'::'+file];
-        console.error ('* borg ' + cmdargs.join (' '));
+        console.error ('borg ' + cmdargs.join (' '));
         const child = cp.spawn ('borg', cmdargs, { stdio: ['ignore', 'pipe', 'inherit'] });
         child_promise = new Promise ( (resolve, reject) => {
             child.on ('close', resolve);
@@ -223,9 +223,6 @@ async function read_tree (file, archive, tree, _find_tree, _add_tree, _add_node)
             }
         }
     }
-
-    console.error ('\nlast line: '+last_line);
-    console.error ("Memory Usage: "+ process.memoryUsage().heapUsed/(1024*1024) + " MB");
 
     if (child_promise !== undefined) {
         const exitCode = await child_promise;
@@ -481,6 +478,7 @@ async function create_tree_incr (file, archives) {
 async function end_tree_incr (file, db, offset) {
     // flush write buffer unconditionally
     await db.write_flush ();
+    const size = db.write_pos/(1024*1024);
     await db.close ();
 
     // Create buffer object with tag and offset to main data structure
@@ -491,6 +489,7 @@ async function end_tree_incr (file, db, offset) {
     db.write_uvs (offset);
     await db.write_flush ();
     await db.close ();
+    console.error (' done '+Math.floor(size)+' MB');
 }
 
 
@@ -537,9 +536,8 @@ async function main () {
     var obj_archives = null;
     if (files[0] && files[0][0] === '/' && files.length === 1) {
         var obj_archives = {};
-        console.error ('reading borg archive list');
         const filter = new RegExp (files[0].slice(1));
-        console.error ('* borg list --json '+config.borg_repo);
+        console.error ('reading borg archive list:  borg list --json '+config.borg_repo);
         const json = JSON.parse (await call_command ('borg', ['list', '--json', config.borg_repo]));
         for (const e of json.archives) {
             const name = e.name.match (/^((.*\/)?([^\/]*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
