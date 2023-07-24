@@ -190,33 +190,39 @@ async function read_tree (file, archive, tree, _find_tree, _add_tree, _add_node)
         if (obj.path === '.') {
             continue;
         }
-        const path = "/" + obj.path;
-        const last_index = path.lastIndexOf ('/');
-        const check_path = path.slice (0, last_index);
-        if (last_path !== check_path) {
-            // There has been a dir entry missing in input (shouldn't occur), or we switched directory level
-            last_tree = await _find_tree (tree, check_path, archive);
-            last_path = check_path;
+        try {
+            const path = "/" + obj.path;
+            const last_index = path.lastIndexOf ('/');
+            const check_path = path.slice (0, last_index);
+            if (last_path !== check_path) {
+                // There has been a dir entry missing in input (shouldn't occur), or we switched directory level
+                last_tree = await _find_tree (tree, check_path, archive);
+                last_path = check_path;
+            }
+            // directory entry?
+            if (obj.type === 'd') {
+                const dir_name = path.slice (last_index);
+                last_path = path;
+                last_tree = await _add_tree (last_tree, dir_name, archive);
+                continue;
+            }
+            // Something different - create entries as necessary
+            const entry = path.slice (last_index+1);
+            var node;
+            if (obj.type === '-') {
+                node = { a: undefined, s: obj.size, t: Date.parse (obj.isomtime+'Z'), l: undefined, o: undefined };
+            } else if (obj.type === 'l') {
+                node = { a: undefined, s: undefined, t: undefined, l: obj.linktarget, o: undefined };
+            } else {
+                console.error (line);
+                continue;
+            }
+            await _add_node (last_tree, entry, archive, node);
+        } catch (e) {
+            console.error ('* '+e.stack);
+            console.error ('* in line: '+line);
+            throw e;
         }
-        // directory entry?
-        if (obj.type === 'd') {
-            const dir_name = path.slice (last_index);
-            last_path = path;
-            last_tree = await _add_tree (last_tree, dir_name, archive);
-            continue;
-        }
-        // Something different - create entries as necessary
-        const entry = path.slice (last_index+1);
-        var node;
-        if (obj.type === '-') {
-            node = { a: undefined, s: obj.size, t: Date.parse (obj.isomtime+'Z'), l: undefined, o: undefined };
-        } else if (obj.type === 'l') {
-            node = { a: undefined, s: undefined, t: undefined, l: obj.linktarget, o: undefined };
-        } else {
-            console.error (line);
-            continue;
-        }
-        await _add_node (last_tree, entry, archive, node);
     }
 
     console.error ('\nlast line: '+last_line);
@@ -322,11 +328,11 @@ async function add_archive_incr (file, name, archive, input_db, output_db) {
             t.c[e] = { a: [], c: {} };
         } else if (t.c[e].c === null) {
             // data has been written out - should not occur in depth-first ordered log data
-            throw Error ("re-occurance of already processed dir");
+            throw Error (`re-occurance of already processed dir '${e}'`);
         } else if (t.c[e].a === undefined) {
             // data not loaded yet
             if (t.c[e].o === undefined) {
-                throw Error ("missing .o in entry");
+                throw Error (`missing .o in entry '${e}'`);
             }
             t.c[e] = await input_db.read_tree (t.c[e].o);
         }
@@ -340,12 +346,12 @@ async function add_archive_incr (file, name, archive, input_db, output_db) {
             n.a = [ -archive ];
             t.c[e] = n;
         } else if (t.c[e] === null) {
-            throw Error ("re-occurance of already processed node");
+            throw Error (`re-occurance of already processed node '${e}'`);
         } else {
             var oldnode;
             if (t.c[e].a === undefined) {
                 if (t.c[e].o === undefined) {
-                    throw Error ("missing .o in e");
+                    throw Error (`missing .o in entry '${e}'`);
                 }
                 oldnode = await input_db.read_tree (t.c[e].o);
             } else {
@@ -355,8 +361,7 @@ async function add_archive_incr (file, name, archive, input_db, output_db) {
             n.a = oldnode.a;
             const last_a = oldnode.a[oldnode.a.length-1];
             if (last_a === archive || last_a === -archive) {
-                throw Error ('duplicate archive in entry');
-                return;
+                throw Error (`duplicate archive in node '${e}'`);
             }
             if (oldnode.s !== n.s || oldnode.t !== n.t || oldnode.l !== n.l) {
                 n.a.push (-archive);
@@ -693,7 +698,7 @@ async function main () {
     console.error ('done');
 };
 
-main().catch ((e) => console.error ('* '+e.stack));
+main().catch ((e) => { console.error ('* '+e.stack); process.exit (1); });
 
 
 // Data structure:
