@@ -427,7 +427,6 @@ function streamToString (stream) {
         stream.on ('data',  (chunk) => chunks.push (Buffer.from (chunk)));
         stream.on ('error', (err)   => reject  (err));
         stream.on ('end',   ()      => resolve (Buffer .concat (chunks) .toString ('utf8')));
-        stream.on ('close', ()      => console.error ('stream closed'));
     });
 }
 async function call_command (bin, args) {
@@ -437,7 +436,6 @@ async function call_command (bin, args) {
 
 async function open_tree_incr (file) {
     const name = file.match (/^(.*\/)?([^/]*)-data-tree.bin$/);
-    console.error (name);
     if (name == null || name[2] == null || name[2] == '') {
         throw Error (file+' does not match file pattern');
     }

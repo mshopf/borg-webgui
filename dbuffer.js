@@ -31,7 +31,7 @@ class DBuffer {
         this.cache_buf_write = 0;
     }
     async close () {
-        console.error (' done '+(this.file_currentoffset/(1024*1024))+' MB\n');
+        console.error (' done '+Math.floor(this.file_currentoffset/(1024*1024))+' MB');
         return this.fh.close();
     }
     //
