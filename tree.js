@@ -7,8 +7,6 @@ const stream_p = require ('node:stream').promises;
 const DBuffer  = require ('./dbuffer');
 const config   = eval ('('+fs.readFileSync ('./config.js', 'utf8')+')');
 
-const OUTPUT_FILE = 'borg-backup-data-tree.bin';
-
 // walk tree structure
 // unused, just kept for reference purposes
 function walk_tree (tree, path, level=0) {
@@ -219,9 +217,10 @@ async function read_tree (file, archive, tree, _find_tree, _add_tree, _add_node)
             }
             await _add_node (last_tree, entry, archive, node);
         } catch (e) {
-            console.error ('* '+e.stack);
-            console.error ('* in line: '+line);
-            throw e;
+            console.error ('* '+e.message+' for path '+obj.path);
+            if (flags_strict) {
+                throw e;
+            }
         }
     }
 
@@ -425,6 +424,7 @@ async function write_full_bin_tree_incr (input_db, output_db, tree) {
 }
 
 var archives, tree, input_db, output_db;
+var flags_strict = false, flags_create = false;
 
 function streamToString (stream) {
     const chunks = [];
@@ -446,18 +446,28 @@ async function open_tree_incr (file) {
     }
 
     console.error ('Opening data '+name[2]);
-    const fh = await fs_p.open (file, 'r');
-    const db = new DBuffer (fh);
-    await db.read_at (0);
-    if (DBuffer.INIT_TAG_BUF.compare (db.cache_buf, db.cache_buf_pos_read, db.cache_buf_pos_read+4) != 0) {
-        throw Error ('not a bOt0 file');
+    try {
+        const fh = await fs_p.open (file, 'r');
+        const db = new DBuffer (fh);
+        await db.read_at (0);
+        if (DBuffer.INIT_TAG_BUF.compare (db.cache_buf, db.cache_buf_pos_read, db.cache_buf_pos_read+4) != 0) {
+            throw Error ('not a bOt0 file');
+        }
+        db.advance (4);
+        const offset   = db.read_uvs ();
+        const archives = await db.read_archives (0x20);
+        const tree     = await db.read_tree     (offset);
+        return [archives, tree, db];
+    } catch (e) {
+        if (e.code === 'ENOENT' && flags_create) {
+            console.error ('archive does not yet exist, creating fresh one');
+            archives = [ null ];
+            tree = { a:[], c:{} };
+            return [ [ null ], { a:[], c:{} }, null ];
+        } else {
+            throw e;
+        }
     }
-    db.advance (4);
-    const offset   = db.read_uvs ();
-    const archives = await db.read_archives (0x20);
-    const tree     = await db.read_tree     (offset);
-
-    return [archives, tree, db];
 }
 
 async function create_tree_incr (file, archives) {
@@ -486,42 +496,41 @@ async function end_tree_incr (file, db, offset) {
 
 async function main () {
 
-    var [,, mode, datafile, ...files] = process.argv;
+    var argv = process.argv.slice (2);
 
-    if (! mode) {
+    if (! argv[0]) {
         // TODO: loop over all data in config.js
-        console.error ('Usage: cmd -m datafile.[json[.bz2]|.bin]|- /regex|(-|+)archive[.bz2] [...]');
-        console.error ('       cmd -[iap] BACKUP-data-tree.bin|- /regex | [(-|+)archive[.bz2]] [...]');
+        console.error ('Usage: cmd [-s] [-c] -(mia) BACKUP-data-tree.bin /regex | (-|+)archive[.bz2] [...]');
+        console.error ('       cmd [-s] [-c] -p     BACKUP-data-tree.bin');
+        console.error ('-s: strict mode - stop if duplicate entries etc happen');
+        console.error ('-c: create - create new archive if not already present');
         console.error ('-m: in-memory tree building  -i: incremental build (single)  -a: incremental build (all, looping)  -p: in-memory print');
         console.error ('/regex: reads in borg list and determines added/removed archives automatically');
         console.error ('-archive_name: removes archive  +archive_file[.bz2]: adds archive   (multiple possible)');
-        console.error ('-a: not implemented for .bz2 archives');
+        console.error ('-a: only implemented for /regex so far');
         process.exit (1);
     }
+    if (argv[0] === '-s') {
+        flags_strict = true;
+        argv.pslice (0, 1);
+    }
+    if (argv[0] === '-c') {
+        flags_create = true;
+        argv.pslice (0, 1);
+    }
+    var [mode, datafile, ...files] = argv;
+
     if (mode !== '-m' && mode !== '-i' && mode !== '-a' && mode !== '-p') {
         console.error ('bad mode '+mode);
         process.exit (1);
     }
-    if (datafile === '-') {
-        datafile = OUTPUT_FILE;
-        console.error ('fresh start, creating new backup-data');
-        archives = [ null ];
-        tree = { a:[], c:{} };
-    } else {
-        if (mode === '-m' || mode === '-p') {
-            console.error ('Reading original data '+datafile);
-            try {
-                var db;
-                [ archives, tree, db ] = await open_tree_incr (datafile);
-                tree = await read_full_bin_tree (db, tree.o);
-                await db.close ();
-            } catch (e) {
-                console.error ('Reading data: '+e.stack);
-                return;
-            }
-        } else {
-            [ archives, tree, input_db ] = await open_tree_incr (datafile);
-        }
+
+    console.error ('Reading original data '+datafile);
+    [ archives, tree, input_db ] = await open_tree_incr (datafile);
+    if (mode === '-m' || mode === '-p') {
+        tree = await read_full_bin_tree (input_db, tree.o);
+        await input_db.close ();
+        input_db = null;
     }
 
     // parse borg list of archives if wanted
