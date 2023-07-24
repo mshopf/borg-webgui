@@ -511,11 +511,11 @@ async function main () {
     }
     if (argv[0] === '-s') {
         flags_strict = true;
-        argv.pslice (0, 1);
+        argv.splice (0, 1);
     }
     if (argv[0] === '-c') {
         flags_create = true;
-        argv.pslice (0, 1);
+        argv.splice (0, 1);
     }
     var [mode, datafile, ...files] = argv;
 
