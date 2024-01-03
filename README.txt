@@ -1,138 +1,211 @@
-*** Create snake oil cert:
-openssl req -x509 -nodes -newkey rsa:2048 -keyout key.pem -out server.pem -days 7300 -subj '/CN=Borg Backup/C=DE/OU=Borg Backup/O=ACME' -addext "keyUsage = digitalSignature, keyEncipherment, dataEncipherment, cRLSign, keyCertSign" -addext "extendedKeyUsage = serverAuth, clientAuth"
+# ![Icon](public/borg.png) borg-webgui
 
-*** Hash your password:
-node -e 'async function m() { rl=require("readline").promises.createInterface({ input: process.stdin, output: process.stdout, terminal: true}); p=await rl.question("Password: "); rl.close(); console.log (await require ("argon2").hash(p));} m()'
+**A web-based UI for the backup system borg, currently for managing restores only**
 
-*** More memory for node:
-NODE_OPTIONS=--max-old-space-size=16384
+There are a number of UIs for borg available, but all of them only manage the backup side of things, not the restore side. Since backing up is typically done by administrators, restoring data is a more common (i.e. the only) end user action, thus a graphical user interface is required.
 
-*** Bugs
-- write buffer full
+borg-webgui does not allow to access data directly, but only manages file/directory selection and the restore processes. Access to restored data has to be performed by regular file system access (NFS, CIFS, ...). Therefore, borg-webgui does *NOT* handle access restrictions. That means, every user that can access the UI can see all directory and file names, their sizes, and when they have been backed up. In situations where that is not acceptable, access to the UI has to be limited to administrators only. As by restoring huge directories you can easily fill up even large file spaces, some access limitation is reasonable anyway.
+
+borg-webgui does not access borg data structures itself, but uses borg for that. So borg has to be installed on the server. It uses pattern files with `pf` and `pp` directives for restoring data.
+
+borg-webgui is battle tested on backup sets with more than 80 archives containing over 6 TB of data in over 7 million files. The data tree for this backup set requires 1.5 GB of disc space and can be created only incrementally due to RAM restrictions. Still, consider this an alpha release.
+
+
+## License
+
+borg-webgui is licensed under GPL v3, written mainly by Matthias Hopf <mat@mshopf.de>.
+
+The icon is apparently public domain, origins unclear.
+
+
+# Setup
+
+borg-webgui is implemented as a node/express server, a pure javascript client, and a node based tool for incrementally writing the compressed data structure the express server works with. By working with out-of-core data structures it is designed to work with huge and lots of backup sets.
+
+
+## Configuration
+
+Basic configuration is contained in `config.js`. An example configuration `config_example.js` is contained in the repo, copy it to `config.js` and start configuring there.
+
+- `httpPort`, `httpsPort`:\
+  If both are available, http will be a redirector only. https requires a proper certificate in `ssl/server.key` and `ssl/server.crt`[^1]
+- `borg_backup_log`:\
+  Log is used for displaying when the last backups have been performed. Lines should contain `ERR` to be detected as errors.
+- `borg_repo`:\
+  Repository used for all commands. Will be per data config in the future.
+- `data`: List (array) of configurations, each:
+  - `file`: path to data tree
+  - `restore`: path to where to extract backups to
+  - `borg_args`: additional borg argumnents; useful are e.g. `--sparse`, `'--strip-components`
+- `auth`: List (object) of users, each:
+  - `pwd`: argon2id hashed password[^2]
+- `max_cache_entries`:\
+  Maximum number of cache entries kept in server before purging
+- `max_status_entries`:\
+  Number of status entries from log and restoring process kept before truncating
+- `client_config`: Information sent to client for UI behavior
+  - `max_restore_entries_trivial`: User has to explicitly confirm restoration when more files are to be restored
+  - `max_restore_size_trivial`: User has to explicitly confirm restoration when larger data is to be restored
+- `hook_preroutes`, `hook_postroutes`, `hook_poststartup`:\
+  Own routes and functionality can be added to server.
+
+
+## Backup list processing
+
+> [!NOTE]
+> The *typical* command run directly after performing a backup is
+> ```
+node ./tree.js -a BACKUP-data-tree.bin /server-
+```
+> if the backups are named like `server-2023-12-31-011505`.\
+> The data tree has to exist already for this to work.
+
+The data structure[^3] required for out-of-core direct access to all backup data is initially created with
+```
+node ./tree.js -c BACKUP-data-tree.bin
+```
+Use separate data trees for different backups. Using the extension `-data-tree.bin` for all data trees is recommended. Data trees tend to get pretty big for large backup sets, choose their location accordingly.
+
+You can combine initial creation (`-c`) with adding (several) backups to the data tree. Without `-c` the old data tree is read in and additional backups are added or removed to/from it. For initial setup and not too large backup sets, it is reasonable to do that in-memory[^4]:
+```
+node ./tree.js -c -m BACKUP-data-tree.bin +BACKUP_1 +BACKUP_2 -BACKUP_3
+```
+This will add BACKUP_1 and BACKUP_2 and remove the data from BACKUP_3 (not useful while creating a data tree for the first time).
+Using `/REGEX` will use `borg list` to find available backup names automatically, and add and/or remove backups that are (still) accessible automatically.
+
+For larger backup sets, it requires much less RAM when doing this out-of-core, i.e. incrementally. Instead option `-m` use `-i` for a single iteration, `-a` for repeatedly adding/removing all given backup sets. Using that together with `/REGEX` is probably the most commonly used form (see top of chapter). Incrementally changing the data tree is much slower than in-memory, especially if multiple changes have to be applied.
+
+
+## Server setup
+
+> [!NOTE]
+> The server is started with
+> ```
+node ./server.js
+```
+
+Server log is printed to stdout. See [^5] for a typical startup script.
+
+The server only requires a restart, if configuration options `http_port` or `https_port`, the hooks, or the server code change. All other changes in the configuration and in the data trees are detected and acted upon by watchers.
+
+
+# Client Usage
+
+borg-webgui displays backups not separated by backup date, but the whole tree at once. Users typically want to restore a specific file or directory, and decide the exact backup date after they know which ones actually exist. This is a design decision. Archive specific views might be added in the future.
+
+
+## Initial view
+
+After surfing to the configured entry page a list of backup configurations and an event log is presented. Clicking on an event log displays the according log file. Clicking on a backup configuration enters the file/directory selection mode. For those actions, valid credentials have to be entered.
+
+## File/directory selection mode
+
+The action bar contains a `Restore` button that is grayed out as long as no entries are selected for restoration. It contains a backup selector and shows the number of elements and total size of the upcoming restore process. When a big restore process shall be activated, it has to be confirmed explicitly.
+
+Beneath that is a typical tree view of the backed up data. All directories and files that ever existed in the backup are shown, all at once. That is, if a directory `alice` is renamed to `bob`, both will show up. The former will only exist in older backups, the later only in newer. To the right a (shortened) list of available backups is presented. Whenever an entry is unchanged in several backups, those are merged into one item and shown with the oldest date (e.g. `30.3.2020(32)`). Tooltips show the exact times and dates of the backups.
+
+Clicking on the triangle icon or the name will open/close directories.\
+Clicking on the square or the backup dates will select according directory or file for recovery.\
+Half-filled squares on directories indicate that some but not all of the elements beneath are selected.
+
+If all entries of an directory are selected, the system considers this as an request to reconstruct the directory of the selected date as-is. In that case, only files that were actually present in that backup are reconstructed. That is typically what users want.
+
+If too many entries are selected (e.g. all but one in a large directory), chances are that there is not a single backup, in which all selected entries exist. That happens e.g. when you select a large directory, and deselect a single entry of it afterwards.
+
+> [!NOTE]
+> Humans consider dates, when they worked on a file, not when a backup is done. As backups are typically done during the night, often past midnight, all backups performed between 12am and 6am are considered to contain the state of the previous date and displayed accordingly. Tooltips reveal the true backup times and dates.
+
+After selecting the wanted items, one should select the backup date that should be used for restoration and start the process. Back on the entry page the restoration process will show up in the event log.
+
+When the process is finished, the restored entries will show up within the configured restore path in a directory with the backup date and time as name. It is up to the administrator to remove leftover restoration directories[^6].
+
+
+# Bugs, Testing, Limitations, Contributions
+
+## Side notes
+
+- Removing backups from the data tree will *NOT* reunite data that has been split by that backup.
+
+  For example consider a data tree, that has a file in version a in backup sets 1, 2, and 4, and in version b in backup set 3 (e.g. renamed for set 3 and moved back again for set 4). That leaves backup possibilities 1+2, 3, and 4. After removing backup set 3, it will still be 1+2 and 4, though these two are the same. If the data tree is recreated from backup sets 1, 2, and 4 from scratch, backup possibilities will be 1+2+4.
+
+- Symlinks are displayed and can be selected accordingly
+
+- Files are considered differently, if their sizes or modification times differ. borg-webgui does not check any checksums, because extracting those slows down `borg list` significantly.
+
+- `borg extract` is still a relatively slow operation. Requests are queued and processed one at a time. Future changes in borg might help, as the used `pp` and `pf` patterns could be optimized easier than others, but that requires changes to the borg archive structure.
+
+## Bugs
+
+Bug tracking is not set up yet.
+
+[ ] The testing scripts `test.sh` and `test_data.js` are written for an older version of the data structures and thus inoperable at the moment.
+
+[ ] write buffer full\
   (node:414855) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 drain listeners added to [WriteStream]. Use emitter.setMaxListeners() to increase limit
-  (Use `node --trace-warnings ...` to show where the warning was created)
+  (Use `node --trace-warnings ...` to show where the warning was created)\
+  To be recreated...
+
+[ ] (incompatible) Optimization of on-disk data structure\
+  Use `null` for "no entry" in write_tree()/read_tree(). Use relative offsets. Relative dates have already been tested, not useful enough for the additional overhead.
+
+## Limitations and TODOs
+
+- At the moment, there is no handling of the backup side of borg. That may change in the future.
+
+- At the moment, borg backups have to be named `NAME-Year-Month-Date-HourMinuteSecond` (e.g. `server-2023-12-31-011505`) to be processed automatically. That may change in the future.
+
+- At the moment there is only trivial all-or-nothing access restriction in place. A role based authentication model and finer granular access controls are planed.
+
+- There are no archive specific views ATM.
 
 
-*** Dev Notes
+## Contributions
 
-Object: a "Archives" - Array of archive names TBC
-            c "Children" - keys are dir/file names
-            s "Size"  t "mTime"  l "link" of last added archive
-            c available on dirs, s and t on files, l on links
-     //{"type": "d", "mode": "drwxr-xr-x", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig", "healthy": true, "source": "", "linktarget": "", "flags": 0, "isomtime": "2022-01-24T16:33:10.461280", "size": 0}
-         //{"type": "-", "mode": "-rw-r--r--", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig/64bit_strstr_via_64bit_strstr_sse2_unaligned", "healthy": true, "source": "", "linktarget": "", "flags": 0, "isomtime": "2021-11-15T19:29:28.000000", "size": 0}
-             //{"type": "l", "mode": "lrwxrwxrwx", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig/grub", "healthy": true, "source": "../default/grub", "linktarget": "../default/grub", "flags": 0, "isomtime": "2022-01-12T16:23:39.000000", "size": 15}
+Bug reports, patches, merge requests welcome.
 
-.c === undefined: file/link/special
-.c === [] empty dir
-.c === null: subtree already written, o (offset) should be set
+Processing on my side can take a while, though.
 
 
-File data structure
-===================
+# Footnotes
 
-Numbers written as variably sized integer
-This scheme does not create binary patters starting with 0x80 (and 0xff for signed values). Except for
--  0x7e and  0x7f  in uvs: 0x807e and 0x807f
-- -0x3f and -0x40  in svs: 0xff41 and 0xff40
-These numbers are reserved for specials:
-- 0x7e (uvs) 0x41 (svs) : undefined
-- 0x7f (uvs) 0x40 (svs) : null
+[^1]: Create snake oil certificate, if only accessible in intranet (no public hostname available for LetsEncrypt):
+```
+openssl req -x509 -nodes -newkey rsa:2048 -keyout key.pem -out server.pem -days 7300 -subj '/CN=Borg Backup/C=DE/OU=Borg Backup/O=ACME' -addext "keyUsage = digitalSignature, keyEncipherment, dataEncipherment, cRLSign, keyCertSign" -addext "extendedKeyUsage = serverAuth, clientAuth"
+```
 
-NOTE: Numbers > 52bit currently not represented exactly on reading
-Numbers to be delivered as BigInts to be written exactly
-Variable sized integer (uvs (unsigned)) - big endian
-- 0x00000000-0x0000007d   - 0xxxxxxx
-- 0x0000007e-0x00003fff   - 1xxxxxxx (hi 7 bits)  0xxxxxxx (lo 7 bits)
-- 0x00004000-0x001fffff   - 1xxxxxxx (hi 7 bits)  1xxxxxxx  0xxxxxxx (lo 7 bits)
-[...]
-- 0x0002000000000000-0x00ffffffffffffff   - hi-to-lo 7x 1xxxxxxx  ...  0xxxxxxx (lo 7 bits)
-- 0x0100000000000000-0xffffffffffffffff   - hi-to-lo 8x 1xxxxxxx  ...  xxxxxxxx (lo 8(!) bits)
-Variable sized integer (svs (signed))
-- -0x0000003e-0x0000003f   - 0sxxxxxx
-- -0x00002000-0x00001fff   - 1sxxxxxx (hi 7 bits)  0xxxxxxx (lo 7 bits)
-- -0x00100000-0x000fffff   - 1sxxxxxx (hi 7 bits)  1xxxxxxx  0xxxxxxx (lo 7 bits)
-[...]
-- -0x0080000000000000-0x007fffffffffffff   - hi-to-lo 7x 1sxxxxxx  ...  0xxxxxxx (lo 7 bits)
-- -0x8000000000000000-0x7fffffffffffffff   - hi-to-lo 8x 1sxxxxxx  ...  xxxxxxxx (lo 8(!) bits)
+[^2]: Hash your password:
+```
+node -e 'async function m() { rl=require("readline").promises.createInterface({ input: process.stdin, output: process.stdout, terminal: true}); p=await rl.question("Password: "); rl.close(); console.log (await require ("argon2").hash(p));} m()'
+```
 
+[^3]: [Information about internal data structures](INTERNALS.txt)
 
-File Format
-===========
+[^4]: Increase available memory for node:
+```
+NODE_OPTIONS=--max-old-space-size=16384
+```
 
-0x0000..0x0003       Magic 'bOt0' - binary offset tree 0
-0x0004..0x000b(max)  uvs  Offset to root (at end of file)
-      ..0x0014(max)  uvs  Current time, used for time offset coding (currently not set / unused)
-0x0020..             tree data
+[^5]: Typical startup script for server:
+```
+#!/bin/sh
+cd /local/srv/borg-webgui || exit 1
+mkdir -p log
+log=log/server-`date +'%Y%m%d-%H%M%S'`.log
+exec >$log 2>&1 </dev/null
+pkill -f 'node ./server.js'
+nohup node ./server.js &
+```
 
-
-
-
-TODO: Future work - generic data structure
-==========================================
-
-0x0000..0x0003  Magic 'bOt1' - binary offset tree 1
-0x0004..0x000c  uvs  Offset to root (at end of file)
-0x0010..        data type descriptions
-
-structure / data type description
-- new type (1byte)-0x00 end of description
-                   0x40 and following
-- type (1byte)   - 0x00 end of new type
-                   0x01 undefined
-                   0x02 null
-                   0x03 s8  (1byte)
-                   0x04 u8  (1byte)
-                   0x05 s16 (svs)
-                   0x06 u16 (uvs)
-                   0x07 s32 (svs)
-                   0x08 u32 (uvs)
-                   0x09 s64 (svs)
-                   0x0a u64 (uvs)
-                   0x20 string
-                   0x21 double
-                   0x22 BigInt
-                        TODO
-                   0x30 reference
-                        (1byte) type
-                   0x31 sub-type / structure / single object / fixed associative array:
-                        (1byte) type
-                   0x32 fixed size array:
-                        (uvs)   size of array
-                        (1byte) type of entries  (<0x30 || >=0x40)
-                   0x33 flexible array:
-                        (1byte) type of entries  (<0x30 || >=0x40)
-                   0x34 associative array:
-                        (1byte) type of entries  (<0x30 || >=0x40)
-- name (utf8)    - 0x00-0x7f ascii, >0x80: -0x80 index on name strings
-  repeat type+name until type === 0x00
-- strings for names
-  - size    (1    vs)
-  - content (size utf8)
-- end of header, beginning of data
-
-- data per type
-  - 0x01 undefined           none
-  - 0x02 null                none
-  - 0x03 s8                  (1byte)
-  - 0x04 u8                  (1byte)
-  - 0x05 s16                 (svs)
-  - 0x06 u16                 (uvs)
-  - 0x07 s32                 (svs)
-  - 0x08 u32                 (uvs)
-  - 0x09 s64                 (svs)
-  - 0x0a u64                 (uvs)
-  - 0x20 string              (uvs) size  size*(utf8) string
-  - 0x21 double              (8bytes)
-  - 0x22 BigInt              TODO
-  - 0x30 reference           (uvs) offset to type
-  - 0x31 type/structure      (depending-on-type)
-  - 0x32 fixed size array    size*(depending-on-type)
-  - 0x33 flexible array      (uvs) size    size*(depending-on-type)
-  - 0x34 associative array   (uvs) size    (uvs) offset-to-strings    size*(uvs) offset-to-keys     size*(depending-on-type)
-- 0x05-0x0e #of bytes
-- 0x0f see above
-- 0x10 ?
-- 0x11 string
-- 0x12 double             (8bytes)
-
+[^6]: Example script for cleaning up restore directory `/local/_RESTORE` after 14 days
+```
+#!/bin/sh
+tmp=`mktemp /tmp/borg_XXXXXXXXXXXX`
+maxage=14
+shopt -s nullglob
+for d in /local/_RESTORE/[1-9]* ; do
+        find "$d" -depth \! -ctime -$maxage >>$tmp
+        find "$d" -depth \! -ctime -$maxage -delete
+done
+logger -t borg -p daemon.notice "Cleanup of borg restores, deleted `wc -l <$tmp` files/dirs"
+rm -f $tmp
+```

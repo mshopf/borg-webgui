@@ -1,0 +1,79 @@
+# Developer Notes
+
+## Analyses of borg archives by borg list --format "{type} {path} {size} {isomtime}" --json-lines
+
+Example input for directory:
+  {"type": "d", "mode": "drwxr-xr-x", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig", "healthy": true, "source": "", "linktarget": "", "flags": 0, "isomtime": "2022-01-24T16:33:10.461280", "size": 0}
+Example input for files:
+  {"type": "-", "mode": "-rw-r--r--", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig/64bit_strstr_via_64bit_strstr_sse2_unaligned", "healthy": true, "source": "", "linktarget": "", "flags": 0, "isomtime": "2021-11-15T19:29:28.000000", "size": 0}
+Example input for symlinks:
+  {"type": "l", "mode": "lrwxrwxrwx", "user": 0, "group": 0, "uid": 0, "gid": 0, "path": "etc/sysconfig/grub", "healthy": true, "source": "../default/grub", "linktarget": "../default/grub", "flags": 0, "isomtime": "2022-01-12T16:23:39.000000", "size": 15}
+
+
+## Internal data structure
+
+Object: a "Archives" - Array of archive names (numbers) to be considered
+        c "Children" - keys are dir/file names, dirs *pre*pended by '/' ;
+          null for already saved dirs to detect inconsistencies (incremental mode only)
+        s "Size"  t "mTime"  l "link" of last added archive
+        c available on dirs, s and t on files, l on links
+        S maximum total size, C maximum total file count (both on dirs)
+        o offset to structure on disk
+
+.c === undefined: file/link/special
+.c === [] empty dir
+.c === null: subtree already written, o (offset) must be set
+
+
+## File data structure
+
+To reduce file space consumption, data is binary, all numbers are written as variable sized integers,
+called uvs (unsigned variably sized) and svs (signed variably sized) from now on.
+Data is not compressed by regular schemes, as that disables direct access.
+
+A string is written in its UTF8 representation, length (uvs) followed by its content.
+
+Arrays are written as size (uvs) followed by their specific content.
+
+The data tree itself is written entry by entry, with offsets to lower level directories used
+for the children. Therefore leaves are written first, the root is the last item to be written
+and thus located at the end of the file.
+
+
+### File Format
+
+0x0000..0x0003       Magic 'bOt0' - binary offset tree 0
+0x0004..0x000d(max)  uvs  Offset to root (at end of file)
+      ..0x0016(max)  uvs  Current time, used for time offset coding (currently not set / unused)
+0x0020..             tree data
+
+
+### Variable sized integers
+
+Numbers (including null and undefined) are written as variably sized integers, similar to UTF-8,
+requiring a maximum of 9 bytes on disk.
+
+This scheme does not create binary patterns starting with 0x80 (and 0xff for signed values). Except for
+-  0x7e and  0x7f  in uvs: 0x807e and 0x807f
+- -0x3f and -0x40  in svs: 0xff41 and 0xff40
+These numbers are reserved for specials:
+- 0x7e (uvs) 0x41 (svs) : undefined
+- 0x7f (uvs) 0x40 (svs) : null
+
+NOTE: Numbers > 52bit currently not represented exactly on reading
+Numbers to be delivered as BigInts to be written exactly
+
+Variable sized integer (uvs (unsigned)) - big endian
+- 0x00000000-0x0000007d   - 0xxxxxxx
+- 0x0000007e-0x00003fff   - 1xxxxxxx (hi 7 bits)  0xxxxxxx (lo 7 bits)
+- 0x00004000-0x001fffff   - 1xxxxxxx (hi 7 bits)  1xxxxxxx  0xxxxxxx (lo 7 bits)
+[...]
+- 0x0002000000000000-0x00ffffffffffffff   - hi-to-lo 7x 1xxxxxxx  ...  0xxxxxxx (lo 7 bits)
+- 0x0100000000000000-0xffffffffffffffff   - hi-to-lo 8x 1xxxxxxx  ...  xxxxxxxx (lo 8(!) bits)
+Variable sized integer (svs (signed))
+- -0x0000003e-0x0000003f   - 0sxxxxxx
+- -0x00002000-0x00001fff   - 1sxxxxxx (hi 7 bits)  0xxxxxxx (lo 7 bits)
+- -0x00100000-0x000fffff   - 1sxxxxxx (hi 7 bits)  1xxxxxxx  0xxxxxxx (lo 7 bits)
+[...]
+- -0x0080000000000000-0x007fffffffffffff   - hi-to-lo 7x 1sxxxxxx  ...  0xxxxxxx (lo 7 bits)
+- -0x8000000000000000-0x7fffffffffffffff   - hi-to-lo 8x 1sxxxxxx  ...  xxxxxxxx (lo 8(!) bits)
