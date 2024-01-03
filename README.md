@@ -8,7 +8,7 @@ borg-webgui does not allow to access data directly, but only manages file/direct
 
 borg-webgui does not access borg data structures itself, but uses borg for that. So borg has to be installed on the server. It uses pattern files with `pf` and `pp` directives for restoring data.
 
-borg-webgui is battle tested on backup sets with more than 80 archives containing over 6 TB of data in over 7 million files. The data tree for this backup set requires 1.5 GB of disc space and can be created only incrementally due to RAM restrictions. Still, consider this an alpha release.
+borg-webgui is battle tested on backup sets with more than 80 archives containing over 6 TB of data in over 7 million files in a single backup configuration. The data tree for this backup set requires 1.5 GB of disc space and can be created only incrementally due to RAM restrictions. Still, consider this an early release.
 
 
 ## License
@@ -28,7 +28,7 @@ borg-webgui is implemented as a node/express server, a pure javascript client, a
 Basic configuration is contained in `config.js`. An example configuration `config_example.js` is contained in the repo, copy it to `config.js` and start configuring there.
 
 - `httpPort`, `httpsPort`:\
-  If both are available, http will be a redirector only. https requires a proper certificate in `ssl/server.key` and `ssl/server.crt`[^1]
+  If both are available, http will be a redirector only. https requires a [proper certificate](#Certificates) in `ssl/server.key` and `ssl/server.crt`
 - `borg_backup_log`:\
   Log is used for displaying when the last backups have been performed. Lines should contain `ERR` to be detected as errors.
 - `borg_repo`:\
@@ -36,9 +36,9 @@ Basic configuration is contained in `config.js`. An example configuration `confi
 - `data`: List (array) of configurations, each:
   - `file`: path to data tree
   - `restore`: path to where to extract backups to
-  - `borg_args`: additional borg argumnents; useful are e.g. `--sparse`, `'--strip-components`
+  - `borg_args`: additional borg arguments; useful are e.g. `--sparse`, `'--strip-components`
 - `auth`: List (object) of users, each:
-  - `pwd`: argon2id hashed password[^2]
+  - `pwd`: argon2id [hashed password](#Password-hashing)
 - `max_cache_entries`:\
   Maximum number of cache entries kept in server before purging
 - `max_status_entries`:\
@@ -54,19 +54,19 @@ Basic configuration is contained in `config.js`. An example configuration `confi
 
 > [!NOTE]
 > The *typical* command run directly after performing a backup is
+> ```Shell
+> node ./tree.js -a BACKUP-data-tree.bin /server-
 > ```
-node ./tree.js -a BACKUP-data-tree.bin /server-
-```
 > if the backups are named like `server-2023-12-31-011505`.\
 > The data tree has to exist already for this to work.
 
-The data structure[^3] required for out-of-core direct access to all backup data is initially created with
+The [data structure](INTERNALS.txt) required for out-of-core direct access to all backup data is initially created with
 ```
 node ./tree.js -c BACKUP-data-tree.bin
 ```
 Use separate data trees for different backups. Using the extension `-data-tree.bin` for all data trees is recommended. Data trees tend to get pretty big for large backup sets, choose their location accordingly.
 
-You can combine initial creation (`-c`) with adding (several) backups to the data tree. Without `-c` the old data tree is read in and additional backups are added or removed to/from it. For initial setup and not too large backup sets, it is reasonable to do that in-memory[^4]:
+You can combine initial creation (`-c`) with adding (several) backups to the data tree. Without `-c` the old data tree is read in and additional backups are added or removed to/from it. For initial setup and not too large backup sets, it is reasonable to [do that in-memory](#In-memory-parameters):
 ```
 node ./tree.js -c -m BACKUP-data-tree.bin +BACKUP_1 +BACKUP_2 -BACKUP_3
 ```
@@ -80,11 +80,11 @@ For larger backup sets, it requires much less RAM when doing this out-of-core, i
 
 > [!NOTE]
 > The server is started with
+> ```Shell
+> `node ./server.js
 > ```
-node ./server.js
-```
 
-Server log is printed to stdout. See [^5] for a typical startup script.
+Server log is printed to stdout. See [the script section below](#Server-startup) for a typical startup script.
 
 The server only requires a restart, if configuration options `http_port` or `https_port`, the hooks, or the server code change. All other changes in the configuration and in the data trees are detected and acted upon by watchers.
 
@@ -112,12 +112,12 @@ If all entries of an directory are selected, the system considers this as an req
 
 If too many entries are selected (e.g. all but one in a large directory), chances are that there is not a single backup, in which all selected entries exist. That happens e.g. when you select a large directory, and deselect a single entry of it afterwards.
 
-> [!NOTE]
+> [!IMPORTANT]
 > Humans consider dates, when they worked on a file, not when a backup is done. As backups are typically done during the night, often past midnight, all backups performed between 12am and 6am are considered to contain the state of the previous date and displayed accordingly. Tooltips reveal the true backup times and dates.
 
 After selecting the wanted items, one should select the backup date that should be used for restoration and start the process. Back on the entry page the restoration process will show up in the event log.
 
-When the process is finished, the restored entries will show up within the configured restore path in a directory with the backup date and time as name. It is up to the administrator to remove leftover restoration directories[^6].
+When the process is finished, the restored entries will show up within the configured restore path in a directory with the backup date and time as name. It is up to the administrator to [remove leftover restoration directories](#Cleanup-restore-directories).
 
 
 # Bugs, Testing, Limitations, Contributions
@@ -126,13 +126,14 @@ When the process is finished, the restored entries will show up within the confi
 
 - Removing backups from the data tree will *NOT* reunite data that has been split by that backup.
 
-  For example consider a data tree, that has a file in version a in backup sets 1, 2, and 4, and in version b in backup set 3 (e.g. renamed for set 3 and moved back again for set 4). That leaves backup possibilities 1+2, 3, and 4. After removing backup set 3, it will still be 1+2 and 4, though these two are the same. If the data tree is recreated from backup sets 1, 2, and 4 from scratch, backup possibilities will be 1+2+4.
+  For example consider a data tree, that has a file in version a in backup sets 1, 2, and 4, and in version b in backup set 3 (e.g. renamed for set 3 and moved back again for set 4). That leaves backup possibilities 1+2, 3, and 4. After removing backup set 3, it will still be 1+2 and 4, though these two are the same. If the data tree is recreated from backup sets 1, 2, and 4 from scratch, backup possibilities will be only the single 1+2+4.
 
 - Symlinks are displayed and can be selected accordingly
 
 - Files are considered differently, if their sizes or modification times differ. borg-webgui does not check any checksums, because extracting those slows down `borg list` significantly.
 
 - `borg extract` is still a relatively slow operation. Requests are queued and processed one at a time. Future changes in borg might help, as the used `pp` and `pf` patterns could be optimized easier than others, but that requires changes to the borg archive structure.
+
 
 ## Bugs
 
@@ -148,14 +149,12 @@ Bug tracking is not set up yet.
 [ ] (incompatible) Optimization of on-disk data structure\
   Use `null` for "no entry" in write_tree()/read_tree(). Use relative offsets. Relative dates have already been tested, not useful enough for the additional overhead.
 
+
 ## Limitations and TODOs
 
 - At the moment, there is no handling of the backup side of borg. That may change in the future.
-
 - At the moment, borg backups have to be named `NAME-Year-Month-Date-HourMinuteSecond` (e.g. `server-2023-12-31-011505`) to be processed automatically. That may change in the future.
-
 - At the moment there is only trivial all-or-nothing access restriction in place. A role based authentication model and finer granular access controls are planed.
-
 - There are no archive specific views ATM.
 
 
@@ -166,27 +165,34 @@ Bug reports, patches, merge requests welcome.
 Processing on my side can take a while, though.
 
 
-# Footnotes
+# Support Scripts
 
-[^1]: Create snake oil certificate, if only accessible in intranet (no public hostname available for LetsEncrypt):
-```
+## Certificates
+
+Create snake oil certificate, if only accessible in intranet (no public hostname available for LetsEncrypt):
+```Shell
 openssl req -x509 -nodes -newkey rsa:2048 -keyout key.pem -out server.pem -days 7300 -subj '/CN=Borg Backup/C=DE/OU=Borg Backup/O=ACME' -addext "keyUsage = digitalSignature, keyEncipherment, dataEncipherment, cRLSign, keyCertSign" -addext "extendedKeyUsage = serverAuth, clientAuth"
 ```
 
-[^2]: Hash your password:
-```
+## Password hashing
+
+Print the hash your password for use with `config.js`:
+```Shell
 node -e 'async function m() { rl=require("readline").promises.createInterface({ input: process.stdin, output: process.stdout, terminal: true}); p=await rl.question("Password: "); rl.close(); console.log (await require ("argon2").hash(p));} m()'
 ```
 
-[^3]: [Information about internal data structures](INTERNALS.txt)
+## In-memory parameters
 
-[^4]: Increase available memory for node:
-```
+Increase available memory for node by using this environment variable:
+```Shell
 NODE_OPTIONS=--max-old-space-size=16384
 ```
 
-[^5]: Typical startup script for server:
-```
+## Server startup
+
+A typical startup script for the server, handling restarts as well;\
+be aware, that this does kill all servers started with `node ./server.js`!
+```Shell
 #!/bin/sh
 cd /local/srv/borg-webgui || exit 1
 mkdir -p log
@@ -196,8 +202,10 @@ pkill -f 'node ./server.js'
 nohup node ./server.js &
 ```
 
-[^6]: Example script for cleaning up restore directory `/local/_RESTORE` after 14 days
-```
+## Cleanup restore directories
+
+Example script for cleaning up restore directory `/local/_RESTORE` after 14 days
+```Shell
 #!/bin/sh
 tmp=`mktemp /tmp/borg_XXXXXXXXXXXX`
 maxage=14
