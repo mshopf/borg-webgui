@@ -440,6 +440,7 @@ if (config.httpPort) {
     } else {
         server = http .createServer (app) .listen (config.httpPort, function () {
             console.log ('Express http server listening on port ' + config.httpPort);
+            config.hook_poststartup?. (app, server);
         });
     }
 }
