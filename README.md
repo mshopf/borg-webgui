@@ -32,11 +32,12 @@ Basic configuration is contained in `config.js`. An example configuration `confi
 - `borg_backup_log`:\
   Log is used for displaying when the last backups have been performed. Lines should contain `ERR` to be detected as errors.
 - `borg_repo`:\
-  Repository used for all commands. Will be per data config in the future.
+  Default repository used for all commands.
 - `data`: List (array) of configurations, each:
   - `file`: path to data tree
   - `restore`: path to where to extract backups to
-  - `borg_args`: additional borg arguments; useful are e.g. `--sparse`, `'--strip-components`
+  - `borg_repo`: override repository (optional)
+  - `borg_args`: additional borg arguments; useful are e.g. `--sparse`, `'--strip-components` (optional)
 - `auth`: List (object) of users, each:
   - `pwd`: argon2id [hashed password](#Password-hashing)
 - `max_cache_entries`:\
@@ -55,23 +56,28 @@ Basic configuration is contained in `config.js`. An example configuration `confi
 > [!NOTE]
 > The *typical* command run directly after performing a backup is
 > ```Shell
-> node ./tree.js -a BACKUP-data-tree.bin /server-
+> node ./tree.js -a server-data-tree.bin /server-
 > ```
 > if the backups are named like `server-2023-12-31-011505`.\
 > The data tree has to exist already for this to work.
 
 The [data structure](INTERNALS.txt) required for out-of-core direct access to all backup data is initially created with
 ```
-node ./tree.js -c -i BACKUP-data-tree.bin
+node ./tree.js -c -i server-data-tree.bin
 ```
-Use separate data trees for different backups. Using the extension `-data-tree.bin` for all data trees is recommended. Data trees tend to get pretty big for large backup sets, choose their location accordingly.
+Use separate data trees for different backups. Data trees tend to get pretty big for large backup sets, choose their location accordingly.
+
+> [!IMPORTANT]
+> For borg-webgui to work correctly, backups have to be strictly named after the scheme `BACKUPNAME-YYYY-MM-DD-hhmmss`. `BACKUPNAME` is an arbitrary name, typically comprised of hostname and directory (without `/`!). The remainder is the date and time of the backup. This strict naming requirement may change in the future.
+
+Data trees have to be named the same way as the included backups, with the extension `-data-tree.bin`, e.g. `server-root-data-tree.bin` will contain backups named like `server-root-2023-12-17-010000`.
 
 You can combine initial creation (`-c`) with adding (several) backups to the data tree. Without `-c` the old data tree is read in and additional backups are added or removed to/from it. For initial setup and not too large backup sets, it is reasonable to [do that in-memory](#In-memory-parameters):
 ```
-node ./tree.js -c -m BACKUP-data-tree.bin +BACKUP_1 +BACKUP_2 -BACKUP_3    # Note: -c -m not working ATM
+node ./tree.js -c -m server-data-tree.bin +BACKUP_1 +BACKUP_2 -BACKUP_3    # Note: -c -m not working ATM
 ```
 This will add BACKUP_1 and BACKUP_2 and remove the data from BACKUP_3 (not useful while creating a data tree for the first time).
-Using `/REGEX` will use `borg list` to find available backup names automatically, and add and/or remove backups that are (still) accessible automatically.
+Using `/REGEX` will use `borg list` to find available backup names automatically, and add and/or remove backups that are (still) accessible automatically. Note that due to the strict naming requirements, the regex must typically be the same as the base name at the moment.
 
 For larger backup sets, it requires much less RAM when doing this out-of-core, i.e. incrementally. Instead option `-m` use `-i` for a single iteration, `-a` for repeatedly adding/removing all given backup sets. Using that together with `/REGEX` is probably the most commonly used form (see top of chapter). Incrementally changing the data tree is much slower than in-memory, especially if multiple changes have to be applied.
 
@@ -155,7 +161,7 @@ Bug tracking is not set up yet.
 ## Limitations and TODOs
 
 - At the moment, there is no handling of the backup side of borg. That may change in the future.
-- At the moment, borg backups have to be named `NAME-Year-Month-Date-HourMinuteSecond` (e.g. `server-2023-12-31-011505`) to be processed automatically. That may change in the future.
+- At the moment, borg backups have to be strictly named `BACKUPNAME-YYYY-MM-DD-hhmmss` (e.g. `server-2023-12-31-011505`). That may change in the future.
 - At the moment there is only trivial all-or-nothing access restriction in place. A role based authentication model and finer granular access controls are planed.
 - There are no archive specific views ATM.
 

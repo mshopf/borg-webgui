@@ -384,7 +384,11 @@ async function execute_borg_extract (q) {
     log.write (`\n***********\n\nrestore path: ${cwd}\n`);
     await fs_p.mkdir (cwd, { recursive: true });
 
-    const args = ['extract', '--list', ...trees[q.backup].borg_args??[], '--patterns-from', '/tmp/borg-restore-'+q.handle+'.patterns', config.borg_repo+'::'+q.backup+'-'+q.archive];
+    const repo = trees[q.backup].borg_repo ?? config.borg_repo;
+    const args = [ 'extract', '--list',
+                   ... trees[q.backup].borg_args ?? [],
+                   '--patterns-from', '/tmp/borg-restore-'+q.handle+'.patterns',
+                    repo+'::'+q.backup+'-'+q.archive];
     log.write ('borg '+args.join(' ')+'\n');
     log.write ('\n***********\n\n');
 

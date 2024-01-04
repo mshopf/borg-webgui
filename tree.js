@@ -7,6 +7,17 @@ const stream_p = require ('node:stream').promises;
 const DBuffer  = require ('./dbuffer');
 const config   = eval ('('+fs.readFileSync ('./config.js', 'utf8')+')');
 
+// parse config data
+config._data = {};
+for (var e of config.data) {
+    const name = e.file.match (/^(.*\/)?([^/]*)-data-tree.bin$/) ?.[2];
+    if (name == null || name == '') {
+        console.error (`* configuration of ${e.file} does not match file pattern`);
+    } else {
+        config._data [name] = e;
+    }
+}
+
 // walk tree structure
 // unused, just kept for reference purposes
 function walk_tree (tree, path, level=0) {
@@ -154,7 +165,7 @@ async function remove_archive_incr (tree, nr, input_db, output_db) {
 }
 
 
-async function read_tree (file, archive, tree, _find_tree, _add_tree, _add_node) {
+async function read_tree (archivename, file, archive, tree, _find_tree, _add_tree, _add_node) {
 
     var stream, child_promise;
     if (file.match (/(\.json|\.bz2)$/)) {
@@ -163,7 +174,8 @@ async function read_tree (file, archive, tree, _find_tree, _add_tree, _add_node)
             stream = stream.pipe (bz2());
         }
     } else {
-        const cmdargs = ['list', '--format', '"{type} {path} {size} {isomtime}"', '--json-lines', config.borg_repo+'::'+file];
+        const repo = config._data[archivename].borg_repo ?? config.borg_repo;
+        const cmdargs = ['list', '--format', '"{type} {path} {size} {isomtime}"', '--json-lines', repo+'::'+file];
         console.error ('borg ' + cmdargs.join (' '));
         const child = cp.spawn ('borg', cmdargs, { stdio: ['ignore', 'pipe', 'inherit'] });
         child_promise = new Promise ( (resolve, reject) => {
@@ -227,7 +239,7 @@ async function read_tree (file, archive, tree, _find_tree, _add_tree, _add_node)
     if (child_promise !== undefined) {
         const exitCode = await child_promise;
         if (exitCode) {
-            throw new Error( `subprocess error exit ${exitCode}`);
+            throw new Error (`subprocess error exit ${exitCode}`);
         }
     }
 
@@ -235,8 +247,8 @@ async function read_tree (file, archive, tree, _find_tree, _add_tree, _add_node)
 }
 
 // add a full archive to in-memory tree
-async function add_full_archive (file, name, tree) {
-    await read_tree (file, archives.length, tree, find_tree, add_tree, add_node);
+async function add_full_archive (archivename, file, name, tree) {
+    await read_tree (archivename, file, archives.length, tree, find_tree, add_tree, add_node);
     archives.push (name);
 
     // find and create subdirectory entries
@@ -284,9 +296,9 @@ async function add_full_archive (file, name, tree) {
 }
 
 // incrementally add an archive
-async function add_archive_incr (file, name, archive, input_db, output_db) {
+async function add_archive_incr (archivename, file, name, archive, input_db, output_db) {
     var current_trees = [];
-    await read_tree (file, archive, tree, find_tree, add_tree, add_node);
+    await read_tree (archivename, file, archive, tree, find_tree, add_tree, add_node);
     // write rest of tree, keep loading while it occurs
     await write_full_bin_tree_incr (input_db, output_db, tree);
     return;
@@ -437,12 +449,7 @@ async function call_command (bin, args) {
 }
 
 async function open_tree_incr (file) {
-    const name = file.match (/^(.*\/)?([^/]*)-data-tree.bin$/);
-    if (name == null || name[2] == null || name[2] == '') {
-        throw Error (file+' does not match file pattern');
-    }
-
-    console.error ('Opening data '+name[2]);
+    console.error ('Opening data '+file);
     try {
         const fh = await fs_p.open (file, 'r');
         const db = new DBuffer (fh);
@@ -518,6 +525,10 @@ async function main () {
         argv.splice (0, 1);
     }
     var [mode, datafile, ...files] = argv;
+    const archivename = datafile.match (/^(.*\/)?([^/]*)-data-tree.bin$/) ?.[2];
+    if (archivename == null || archivename == '') {
+        throw Error (datafile+' does not match file pattern');
+    }
 
     if (mode !== '-m' && mode !== '-i' && mode !== '-a' && mode !== '-p') {
         console.error ('bad mode '+mode);
@@ -535,10 +546,11 @@ async function main () {
     // parse borg list of archives if wanted
     var obj_archives = null;
     if (files[0] && files[0][0] === '/' && files.length === 1) {
-        var obj_archives = {};
+        const repo = config._data[archivename].borg_repo ?? config.borg_repo;
         const filter = new RegExp (files[0].slice(1));
-        console.error ('reading borg archive list:  borg list --json '+config.borg_repo);
-        const json = JSON.parse (await call_command ('borg', ['list', '--json', config.borg_repo]));
+        obj_archives = {};
+        console.error ('reading borg archive list:  borg list --json '+repo);
+        const json = JSON.parse (await call_command ('borg', ['list', '--json', repo]));
         for (const e of json.archives) {
             const name = e.name.match (/^((.*\/)?([^\/]*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
             if (name [1] .match (filter)) {
@@ -562,7 +574,7 @@ async function main () {
             }
             for (const e of Object.keys (obj_archives) .sort()) {
                 console.error ('adding archive '+obj_archives[e]+' as '+e);
-                await add_full_archive (obj_archives[e], e, tree);
+                await add_full_archive (archivename, obj_archives[e], e, tree);
             }
         } else {
 
@@ -592,7 +604,7 @@ async function main () {
                 }
                 else if (name[1] == '+') {
                     // add archive
-                    await add_full_archive (name[2], name[5], tree);
+                    await add_full_archive (archivename, name[2], name[5], tree);
                 }
             }
         }
@@ -643,7 +655,7 @@ async function main () {
                 archives.push (e);
                 console.error (`adding archive ${obj_archives[e]} as ${e} (#${archives.length-1})`);
                 output_db = await create_tree_incr (datafile+".new", archives);
-                await add_archive_incr (obj_archives[e], e, archives.length-1, input_db, output_db);
+                await add_archive_incr (archivename, obj_archives[e], e, archives.length-1, input_db, output_db);
                 await end_tree_incr (datafile+".new", output_db, tree.o);
                 await fs_p.rename (datafile+".new", datafile);
                 await input_db?.close ();
@@ -693,7 +705,7 @@ async function main () {
                 archives.push (name[5]);
                 console.error (`adding archive ${name[5]} as ${name[2]} (#${archives.length-1})`);
                 output_db = await create_tree_incr (datafile+".new", archives);
-                await add_archive_incr (name[2], name[5], archives.length-1, input_db, output_db);
+                await add_archive_incr (archivename, name[2], name[5], archives.length-1, input_db, output_db);
                 await end_tree_incr (datafile+".new", output_db, tree.o);
                 await fs_p.rename (datafile+".new", datafile);
                 await input_db?.close ();
