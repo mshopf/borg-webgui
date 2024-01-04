@@ -4,8 +4,11 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
     <style>
     .logo {
+        position: relative;
+        z-index: 1;
         float: right;
         margin: 10px;
+        text-align: center;
     }
     .comment {
         color: gray;
@@ -93,7 +96,10 @@
     }
     </style>
 </head><body>
-    <img class=logo src=borg.png>
+    <div class=logo>
+        <img src=borg.png><br>
+        <a href=https://github.com/mshopf/borg-webgui#client-usage>borg-webgui Help</a>
+    </div>
     <h3><a href=/>&lt; back</a> &nbsp; Backup of <span id=backup></span></h3>
     <div class=comment>Note: number of entries (#) and sizes are maximum estimations</div>
     <div class=buttonbox><input type=button value="Restore" id=button disabled> from Backup <span id=possibilities></span> - <span id=selectionstats></span></div>

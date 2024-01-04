@@ -4,8 +4,11 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
     <style>
     .logo {
+        position: relative;
+        z-index: 1;
         float: right;
         margin: 10px;
+        text-align: center;
     }
     #root {
         font-size: 150%;
@@ -59,7 +62,10 @@
     }
     </style>
 </head><body>
-    <img class=logo src=borg.png>
+    <div class=logo>
+        <img src=borg.png><br>
+        <a href=https://github.com/mshopf/borg-webgui#client-usage>borg-webgui Help</a>
+    </div>
     <h1>Backups</h1>
     <div id=root></div>
     <h1>Schedule / Log</h1>
