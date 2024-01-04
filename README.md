@@ -63,7 +63,7 @@ Basic configuration is contained in `config.js`. An example configuration `confi
 
 The [data structure](INTERNALS.txt) required for out-of-core direct access to all backup data is initially created with
 ```
-node ./tree.js -c -i server-data-tree.bin
+node ./tree.js -c -m server-data-tree.bin
 ```
 Use separate data trees for different backups. Data trees tend to get pretty big for large backup sets, choose their location accordingly.
 
@@ -74,7 +74,7 @@ Data trees have to be named the same way as the included backups, with the exten
 
 You can combine initial creation (`-c`) with adding (several) backups to the data tree. Without `-c` the old data tree is read in and additional backups are added or removed to/from it. For initial setup and not too large backup sets, it is reasonable to [do that in-memory](#In-memory-parameters):
 ```
-node ./tree.js -c -m server-data-tree.bin +BACKUP_1 +BACKUP_2 -BACKUP_3    # Note: -c -m not working ATM
+node ./tree.js -c -m server-data-tree.bin +BACKUP_1 +BACKUP_2 -BACKUP_3
 ```
 This will add BACKUP_1 and BACKUP_2 and remove the data from BACKUP_3 (not useful while creating a data tree for the first time).
 Using `/REGEX` will use `borg list` to find available backup names automatically, and add and/or remove backups that are (still) accessible automatically. Note that due to the strict naming requirements, the regex must typically be the same as the base name at the moment.
@@ -144,8 +144,6 @@ When the process is finished, the restored entries will show up within the confi
 ## Bugs
 
 Bug tracking is not set up yet.
-
-[ ] `-c -m` is not working ATM
 
 [ ] The testing scripts `test.sh` and `test_data.js` are written for an older version of the data structures and thus inoperable at the moment.
 

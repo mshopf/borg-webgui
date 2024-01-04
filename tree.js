@@ -538,9 +538,11 @@ async function main () {
     console.error ('Reading original data '+datafile);
     [ archives, tree, input_db ] = await open_tree_incr (datafile);
     if (mode === '-m' || mode === '-p') {
-        tree = await read_full_bin_tree (input_db, tree.o);
-        await input_db.close ();
-        input_db = null;
+        if (input_db != null) {
+            tree = await read_full_bin_tree (input_db, tree.o);
+            await input_db.close ();
+            input_db = null;
+        }
     }
 
     // parse borg list of archives if wanted
