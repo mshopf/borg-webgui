@@ -86,7 +86,7 @@ For larger backup sets, it requires much less RAM when doing this out-of-core, i
 
 Server log is printed to stdout. See [the script section below](#Server-startup) for a typical startup script.
 
-The server only requires a restart, if configuration options `http_port` or `https_port`, the hooks, or the server code change. All other changes in the configuration and in the data trees are detected and acted upon by watchers.
+The server only requires a restart, if configuration options `http_port`, `https_port`, `borg_backup_log`, the `data` configurations, the hooks, or the server code change. All other changes in the configuration and the data trees are detected and acted upon by watchers.
 
 
 # Client Usage
@@ -173,7 +173,7 @@ Processing on my side can take a while, though.
 
 Create snake oil certificate, if only accessible in intranet (no public hostname available for LetsEncrypt):
 ```Shell
-openssl req -x509 -nodes -newkey rsa:2048 -keyout key.pem -out server.pem -days 7300 -subj '/CN=Borg Backup/C=DE/OU=Borg Backup/O=ACME' -addext "keyUsage = digitalSignature, keyEncipherment, dataEncipherment, cRLSign, keyCertSign" -addext "extendedKeyUsage = serverAuth, clientAuth"
+openssl req -x509 -nodes -newkey rsa:2048 -keyout ssl/server.key -out ssl/server.crt -days 7300 -subj '/CN=Borg Backup/C=DE/OU=Borg Backup/O=ACME' -addext "keyUsage = digitalSignature, keyEncipherment, dataEncipherment, cRLSign, keyCertSign" -addext "extendedKeyUsage = serverAuth, clientAuth"
 ```
 
 ## Password hashing
