@@ -135,6 +135,9 @@ async function openTree (conf) {
 
 async function openAll () {
     for (const f of config.data) {
+        if (! f.enable) {
+            continue;
+        }
         try {
             const name = await openTree (f);
             setup_watch_tree (name);
