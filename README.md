@@ -136,7 +136,7 @@ When the process is finished, the restored entries will show up within the confi
 
 - Symlinks are displayed and can be selected accordingly
 
-- Files are considered differently, if their sizes or modification times differ. borg-webgui does not check any checksums, because extracting those slows down `borg list` significantly.
+- Files are considered to be different, if their sizes or modification times differ. borg-webgui does not check any checksums, because extracting those slows down `borg list` significantly.
 
 - `borg extract` is still a relatively slow operation. Requests are queued and processed one at a time. Future changes in borg might help, as the used `pp` and `pf` patterns could be optimized easier than others, but that requires changes to the borg archive structure.
 
