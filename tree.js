@@ -555,6 +555,10 @@ async function main () {
         const json = JSON.parse (await call_command ('borg', ['list', '--json', repo]));
         for (const e of json.archives) {
             const name = e.name.match (/^((.*\/)?([^\/]*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
+            if (name == null) {
+                console.error ('unknown archive naming scheme '+e.name);
+                continue
+            }
             if (name [1] .match (filter)) {
                 obj_archives[name[4]] = e.name;
             }
