@@ -5,7 +5,8 @@ class DBuffer {
     static FILE_LENGTH_MAX    = 256;        // limits.h: NAME_MAX
     static PATH_LENGTH_MAX    = 256;        // limits.h: PATH_MAX
     static CACHE_BUF_SIZE_STD = (1024*1024);
-    static INIT_TAG_BUF       = Buffer.from ('bOt0');
+    static INIT_TAG_BUF       = Buffer.from ('bOt1');
+    version = 1;
 
     cache_buf_write    = 0;
     cache_buf_pos_read = 0;
@@ -246,7 +247,19 @@ class DBuffer {
 
     // Hi level: write single tree element to cache (not recursive)
     async write_tree (tree) {
-        tree.o = this.file_currentoffset + this.cache_buf_write;
+        await this.check_flush (32);
+        tree.o = this.write_pos;
+        const directory = tree.c !== undefined;
+        this.cache_buf[this.cache_buf_write++] = directory ? 1 : 0;
+        const indexSlot = this.write_pos;
+        if (directory) {
+            this.cache_buf.fill (0, this.cache_buf_write, this.cache_buf_write + 16);
+            this.cache_buf_write += 16;
+            this.write_uvs (tree.C);
+            this.write_uvs (tree.S);
+        }
+        const intervals = [];
+        const names = [];
         // .s .t.length .l.length .a.length .c.length/null + a*svs + .t + .t
         await this.check_flush ((7 + tree.a.length) * DBuffer.VS_LENGTH_MAX + 2 * DBuffer.PATH_LENGTH_MAX);
         this.write_uvs    (tree.s);
@@ -269,8 +282,56 @@ class DBuffer {
                 }
                 // i.length .o
                 await this.check_flush (2 * DBuffer.VS_LENGTH_MAX + DBuffer.FILE_LENGTH_MAX);
+                const entryOffset = this.write_pos;
+                names.push (entryOffset);
                 this.write_string (i);
                 this.write_uvs    (tree.c[i].o);
+                // Signs describe content changes; presence only depends on absolute IDs.
+                let first, last;
+                for (const value of tree.c[i].a) {
+                    const archive = Math.abs (value);
+                    if (archive !== last + 1) {
+                        if (first !== undefined) intervals.push ({ first, last, entryOffset });
+                        first = archive;
+                    }
+                    last = archive;
+                }
+                if (first !== undefined) intervals.push ({ first, last, entryOffset });
+            }
+        }
+        if (directory) {
+            // A balanced interval tree in a flat array: no child pointers, no repeated names.
+            intervals.sort ((a, b) => a.first - b.first || a.entryOffset - b.entryOffset);
+            function augment (lo, hi) {
+                if (lo >= hi) return 0;
+                const mid = Math.floor ((lo + hi) / 2);
+                return intervals[mid].max = Math.max (intervals[mid].last,
+                    augment (lo, mid), augment (mid + 1, hi));
+            }
+            augment (0, intervals.length);
+            const header = Buffer.alloc (16);
+            header.writeBigUInt64LE (BigInt (this.write_pos));
+            header.writeUInt32LE (intervals.length, 8);
+            header.writeUInt32LE (names.length, 12);
+            // The placeholder may already have been flushed for a very wide directory.
+            if (indexSlot >= this.file_currentoffset) {
+                header.copy (this.cache_buf, indexSlot - this.file_currentoffset);
+            } else {
+                await this.fh.write (header, 0, 16, indexSlot);
+            }
+            for (const name of names) {
+                await this.check_flush (8);
+                this.cache_buf.writeBigUInt64LE (BigInt (name), this.cache_buf_write);
+                this.cache_buf_write += 8;
+            }
+            for (const interval of intervals) {
+                await this.check_flush (20);
+                const pos = this.cache_buf_write;
+                this.cache_buf.writeUInt32LE (interval.first, pos);
+                this.cache_buf.writeUInt32LE (interval.last, pos + 4);
+                this.cache_buf.writeUInt32LE (interval.max, pos + 8);
+                this.cache_buf.writeBigUInt64LE (BigInt (interval.entryOffset), pos + 12);
+                this.cache_buf_write += 20;
             }
         }
     }
@@ -401,6 +462,87 @@ class DBuffer {
         return negate ? -num-1 : num ;
     }
 
+    async read_header () {
+        await this.read_at (0);
+        const magic = this.cache_buf.toString ('ascii', 0, 4);
+        if (magic !== 'bOt0' && magic !== 'bOt1') throw Error ('not a bOt0/bOt1 file');
+        this.version = Number (magic[3]);
+        this.advance (4);
+        return this.read_uvs ();
+    }
+
+    async read_snapshot_header (offset) {
+        await this.read_at (offset, 32);
+        const directory = this.cache_buf[this.cache_buf_pos_read++] === 1;
+        const t = {};
+        if (directory) {
+            t.index = Number (this.cache_buf.readBigUInt64LE (this.cache_buf_pos_read));
+            t.runs = this.cache_buf.readUInt32LE (this.cache_buf_pos_read + 8);
+            t.names = this.cache_buf.readUInt32LE (this.cache_buf_pos_read + 12);
+            this.advance (16);
+            t.C = this.read_uvs ();
+            t.S = this.read_uvs ();
+            t.c = null;
+        }
+        return t;
+    }
+
+    // Read only metadata, never the potentially very long change-history array.
+    async read_snapshot (offset) {
+        const t = await this.read_snapshot_header (offset);
+        await this.check_avail (3 * DBuffer.VS_LENGTH_MAX + DBuffer.FILE_LENGTH_MAX);
+        t.s = this.read_uvs ();
+        t.t = this.read_uvs ();
+        t.l = this.read_string ();
+        return t;
+    }
+
+    async find_snapshot_child (offset, name) {
+        const t = await this.read_snapshot_header (offset);
+        let lo = 0, hi = t.names ?? 0;
+        while (lo < hi) {
+            const mid = Math.floor ((lo + hi) / 2);
+            await this.read_at (t.index + mid * 8, 8);
+            const entryOffset = Number (this.cache_buf.readBigUInt64LE (this.cache_buf_pos_read));
+            await this.read_at (entryOffset, 2 * DBuffer.VS_LENGTH_MAX + DBuffer.FILE_LENGTH_MAX);
+            const key = this.read_string ();
+            const child = this.read_uvs ();
+            if (key === name) return child;
+            if (key < name) lo = mid + 1;
+            else hi = mid;
+        }
+        return undefined;
+    }
+
+    // Find the next page of intervals containing archive. Entire unrelated subtrees
+    // are skipped using max-end bounds. Cursor is an array position, not a file offset.
+    async read_snapshot_page (offset, archive, cursor = 0, limit = 200) {
+        const t = await this.read_snapshot (offset);
+        const entries = [];
+        let next = null;
+        const visit = async (lo, hi) => {
+            if (lo >= hi || hi <= cursor || next !== null) return;
+            const mid = Math.floor ((lo + hi) / 2);
+            await this.read_at (t.index + t.names * 8 + mid * 20, 20);
+            const pos = this.cache_buf_pos_read;
+            const first = this.cache_buf.readUInt32LE (pos);
+            const last = this.cache_buf.readUInt32LE (pos + 4);
+            const max = this.cache_buf.readUInt32LE (pos + 8);
+            const entryOffset = Number (this.cache_buf.readBigUInt64LE (pos + 12));
+            if (max < archive) return;
+            await visit (lo, mid);
+            if (next !== null) return;
+            if (mid >= cursor && first <= archive && last >= archive) {
+                if (entries.length === limit) { next = mid; return; }
+                await this.read_at (entryOffset, 2 * DBuffer.VS_LENGTH_MAX + DBuffer.FILE_LENGTH_MAX);
+                entries.push ([this.read_string (), this.read_uvs ()]);
+            }
+            if (first <= archive) await visit (mid + 1, hi);
+        };
+        if (t.c !== undefined) await visit (0, t.runs);
+        return { entries, next };
+    }
+
     // Hi level: read list of archives
     async read_archives (offset) {
         await this.read_at (offset, DBuffer.VS_LENGTH_MAX);
@@ -416,6 +558,7 @@ class DBuffer {
     // Hi level: read single tree element to cache
     async read_tree (offset) {
         await this.read_at (offset, 6 * DBuffer.VS_LENGTH_MAX + DBuffer.FILE_LENGTH_MAX);
+        if (this.version === 1) await this.read_snapshot_header (offset);
         var t = { a: [], o: offset };
         t.s = this.read_uvs();
         t.t = this.read_uvs();
