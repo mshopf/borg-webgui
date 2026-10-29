@@ -24,6 +24,15 @@ Object: a "Archives" - Array of archive names (numbers) to be considered
 .c === [] empty dir
 .c === null: subtree already written, o (offset) must be set
 
+The archive table at offset 0x20 is still an array of strings (with null at
+index 0). Legacy entries contain YYYY-MM-DD-hhmmss. Borg 2 automatic discovery
+stores YYYY-MM-DD-hhmmss@FULL_ARCHIVE_ID in the same string slots. The date is
+used for display and sorting; the full 64-digit ID selects the exact archive
+with aid: for listing/restoring. This supports repeated archive series names
+and timestamps without changing the binary layout or node archive numbers.
+Trees with Borg 2 entries require this version of the GUI and must be rebuilt
+when switching back to Borg 1. Existing timestamp-only trees remain readable.
+
 
 ## File data structure
 
