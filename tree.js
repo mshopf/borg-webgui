@@ -42,7 +42,7 @@ function consolidate_dirs (tree) {
         return tree.a;
     }
     // TODO? creates directory data afresh - reuse known data?
-    var ar = [];
+    var ar = [...tree.a];
     // Logic:
     // Unite all entries below this directory.
     // Negative entries mean changes, they win over positive entries
@@ -269,6 +269,7 @@ async function add_full_archive (archivename, file, name, tree) {
         if (t.c[entry] === undefined) {
             t.c[entry] = { a: [], c: {} };
         }
+        if (!t.c[entry].a.some (a => Math.abs (a) === archive)) t.c[entry].a.push (-archive);
         return t.c[entry];
     }
 
@@ -344,7 +345,8 @@ async function add_archive_incr (archivename, file, name, archive, input_db, out
             }
             t.c[e] = await input_db.read_tree (t.c[e].o);
         }
-        // else already there
+        // Include explicitly backed-up empty directories as well.
+        if (!t.c[e].a.some (a => Math.abs (a) === archive)) t.c[e].a.push (-archive);
         return t.c[e];
     }
 
@@ -453,12 +455,7 @@ async function open_tree_incr (file) {
     try {
         const fh = await fs_p.open (file, 'r');
         const db = new DBuffer (fh);
-        await db.read_at (0);
-        if (DBuffer.INIT_TAG_BUF.compare (db.cache_buf, db.cache_buf_pos_read, db.cache_buf_pos_read+4) != 0) {
-            throw Error ('not a bOt0 file');
-        }
-        db.advance (4);
-        const offset   = db.read_uvs ();
+        const offset = await db.read_header ();
         const archives = await db.read_archives (0x20);
         const tree     = await db.read_tree     (offset);
         return [archives, tree, db];

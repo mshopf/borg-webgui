@@ -97,7 +97,19 @@ The server only requires a restart, if configuration options `http_port`, `https
 
 # Client Usage
 
-borg-webgui displays backups not separated by backup date, but the whole tree at once. Users typically want to restore a specific file or directory, and decide the exact backup date after they know which ones actually exist. This is a design decision. Archive specific views might be added in the future.
+borg-webgui offers two workflows in the **Browse** selector. **Files first** shows the combined history so you can find a deleted file and choose a suitable backup afterwards. **Backup first** lets you choose an individual backup before exploring only the files and directories present in it. Switching the view or backup clears the current selection.
+
+The backup-first view retains directory expansion, selection checkboxes, partial selections, and the same restore confirmation. It omits per-file backup histories. Directories load on demand, with **Load more entries** for directories larger than 200 entries. Selecting a directory restores its entire contents from the selected backup, including children that have not been loaded. Selecting all currently displayed children only selects the entire directory when its last page has been loaded.
+
+Sizes use the latest indexed file metadata and maximum directory totals, as in the files-first view; these are estimates, not historical sizes. Symlink targets are omitted in backup-first mode because the index does not retain historical targets.
+
+New or rewritten data trees use the indexed `bOt1` format. Older `bOt0` files remain readable, but backup-first browsing needs to scan immediate children in those files. Upgrade once, without accessing Borg, using:
+
+```Shell
+node ./tree.js -i server-data-tree.bin
+```
+
+Back up the data tree before upgrading if you need to run an older server: older releases cannot read `bOt1`. Normal archive additions/removals also upgrade the format automatically. See [INTERNALS.txt](INTERNALS.txt) for index storage and query costs.
 
 
 ## Initial view
@@ -145,7 +157,7 @@ When the process is finished, the restored entries will show up within the confi
 
 Bug tracking is not set up yet.
 
-[ ] The testing scripts `test.sh` and `test_data.js` are written for an older version of the data structures and thus inoperable at the moment.
+`npm test` runs self-contained tree, index, and UI regression tests without a Borg repository. The legacy scripts `test.sh` and `test_data.js` require old external fixtures and are not part of this test suite.
 
 [ ] write buffer full\
   (node:414855) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 drain listeners added to [WriteStream]. Use emitter.setMaxListeners() to increase limit
@@ -161,7 +173,6 @@ Bug tracking is not set up yet.
 - At the moment, there is no handling of the backup side of borg. That may change in the future.
 - At the moment, borg backups have to be strictly named `BACKUPNAME-YYYY-MM-DD-hhmmss` (e.g. `server-2023-12-31-011505`). That may change in the future.
 - At the moment there is only trivial all-or-nothing access restriction in place. A role based authentication model and finer granular access controls are planed.
-- There are no archive specific views ATM.
 
 
 ## Contributions

@@ -11,6 +11,7 @@ const crypto   = require ('crypto');
 const byline   = require ('byline');
 const argon2   = require ('argon2');
 const DBuffer  = require ('./dbuffer');
+const { withTree, browseArchive } = require ('./archive-browse');
 
 const app      = express ();
 const trees    = {};
@@ -119,14 +120,9 @@ async function openTree (conf) {
     console.error ('Opening data '+name[2]+': '+conf.file);
     const fh = await fs_p.open (conf.file, 'r');
     const db = new DBuffer (fh);
-    await db.read_at (0);
-    if (DBuffer.INIT_TAG_BUF.compare (db.cache_buf, db.cache_buf_pos_read, db.cache_buf_pos_read+4) != 0) {
-        throw Error ('not a bOt0 file');
-    }
-    db.advance (4);
-    const offset   = db.read_uvs ();
+    const offset = await db.read_header ();
     const archives = await db.read_archives (0x20);
-    const tree     = await db.read_tree     (offset);
+    const tree = null; // Load the union root only if the file-first view requests it.
 
     console.error ('Done reading '+name[2]+': '+JSON.stringify (archives));
     trees[name[2]] = { ...conf, archives, db, offset, tree, cache: {} };
@@ -209,6 +205,17 @@ app.get ('/api/data/:backup/:path(*)', async function (req, res) {
     if (entry === undefined) {
         return res .status (404) .send (null);
     }
+    return withTree (entry, async () => {
+    if (req.query.archive !== undefined) {
+        const archive = Number (req.query.archive);
+        const cursor = Number (req.query.cursor ?? 0);
+        if (!Number.isSafeInteger (archive) || archive < 1 || archive >= entry.archives.length ||
+            !Number.isSafeInteger (cursor) || cursor < 0) {
+            return res.status (400).json ({ error: 'Invalid archive or cursor' });
+        }
+        const result = await browseArchive (entry, req.params.path, archive, cursor);
+        return result === null ? res.status (404).send (null) : res.json (result);
+    }
     var t;
     // check if dir is in cache
     if (entry.cache[req.params.path]) {
@@ -216,7 +223,7 @@ app.get ('/api/data/:backup/:path(*)', async function (req, res) {
         t = entry.cache[req.params.path];
     } else {
         // Start searching at root
-        t = entry.tree;
+        t = entry.tree ??= await entry.db.read_tree (entry.offset);
 
         var p = '';
         if (req.params.path !== '') {
@@ -272,6 +279,10 @@ app.get ('/api/data/:backup/:path(*)', async function (req, res) {
     }
 
     res.json (copy);
+    }).catch (error => {
+        console.error (error);
+        if (!res.headersSent) res.status (500).json ({ error: 'Cannot read backup data' });
+    });
 });
 
 app.post ('/api/restore/:backup', function (req, res) {
