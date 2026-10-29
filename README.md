@@ -8,6 +8,10 @@ borg-webgui does not allow to access data directly, but only manages file/direct
 
 borg-webgui does not access borg data structures itself, but uses borg for that. So borg has to be installed on the server. It uses pattern files with `pf` and `pp` directives for restoring data.
 
+The server detects `borg --version` at startup and selects Borg 1.x or Borg 2.x syntax automatically. Restart the server after replacing Borg. Live indexing also detects the installed version once per invocation; importing JSON/bz2 listings and inspecting existing trees works without Borg installed. Missing Borg, failed version checks, and unsupported major versions stop live operations with an error.
+
+Borg 2 support targets the `repo-list` CLI (2.0.0b10 and newer); earlier experimental CLIs are not supported. Borg 2 cannot directly restore Borg 1 repositories. Transfer archives to a new Borg 2 repository with Borg's migration tools, update `borg_repo`, and rebuild/synchronize the data tree before restoring. The GUI does not migrate repositories. See [Borg's upgrade notes](https://borgbackup.readthedocs.io/en/latest/changes.html#upgrade-notes).
+
 borg-webgui is battle tested on backup sets with more than 80 archives containing over 6 TB of data in over 7 million files in a single backup configuration. The data tree for this backup set requires 1.5 GB of disc space and can be created only incrementally due to RAM restrictions. Still, consider this an early release.
 
 
@@ -32,12 +36,12 @@ Basic configuration is contained in `config.js`. An example configuration `confi
 - `borg_backup_log`:\
   Log is used for displaying when the last backups have been performed. Lines should contain `ERR` to be detected as errors.
 - `borg_repo`:\
-  Default repository used for all commands.
+  Default repository used for all commands. SSH locations retain Borg 1 path conventions with both versions: `ssh://user@host:port/absolute/path`, `ssh://user@host:port/./relative/path`, or `ssh://user@host:port/~/relative/path`. SCP style locations such as `user@host:/absolute/path` are also converted automatically for Borg 2. Paths relative to another user's home (`~other`) require an explicit absolute path on Borg 2. These conventions also apply to per-data overrides.
 - `data`: List (array) of configurations, each:
   - `file`: path to data tree
   - `restore`: path to where to extract backups to
   - `borg_repo`: override repository (optional)
-  - `borg_args`: additional borg arguments; useful are e.g. `--sparse`, `'--strip-components` (optional)
+  - `borg_args`: additional extract arguments; useful are e.g. `--sparse`, `--strip-components` (optional). Use options supported by the installed Borg version. Borg 2 removed aliases such as `--numeric-owner` (use `--numeric-ids`) and `--nobsdflags` (use `--noflags`), and no longer accepts `--list` with `--progress` unless `--log-json` is enabled. Use environment variables `BORG_RSH` and `BORG_REMOTE_PATH` instead of removed `--rsh` and `--remote-path` options.
 - `auth`: List (object) of users, each:
   - `pwd`: argon2id [hashed password](#Password-hashing)
 - `max_cache_entries`:\
@@ -68,7 +72,7 @@ node ./tree.js -c -m server-data-tree.bin
 Use separate data trees for different backups. Data trees tend to get pretty big for large backup sets, choose their location accordingly.
 
 > [!IMPORTANT]
-> For borg-webgui to work correctly, backups have to be strictly named after the scheme `BACKUPNAME-YYYY-MM-DD-hhmmss`. `BACKUPNAME` is an arbitrary name, typically comprised of hostname and directory (without `/`!). The remainder is the date and time of the backup. This strict naming requirement may change in the future.
+> With Borg 1 and manual imports, backups must be named `BACKUPNAME-YYYY-MM-DD-hhmmss`. `BACKUPNAME` is an arbitrary name, typically comprised of hostname and directory (without `/`!). The remainder is the date and time of the backup. With Borg 2, `/REGEX` discovery also supports archive series (multiple snapshots with the same name); the backup time comes from archive metadata when the name has no date. Use a filter such as `/^server-root$` for the series `server-root`.
 
 Data trees have to be named the same way as the included backups, with the extension `-data-tree.bin`, e.g. `server-root-data-tree.bin` will contain backups named like `server-root-2023-12-17-010000`.
 
@@ -77,7 +81,9 @@ You can combine initial creation (`-c`) with adding (several) backups to the dat
 node ./tree.js -c -m server-data-tree.bin +BACKUP_1 +BACKUP_2 -BACKUP_3
 ```
 This will add BACKUP_1 and BACKUP_2 and remove the data from BACKUP_3 (not useful while creating a data tree for the first time).
-Using `/REGEX` will use `borg list` to find available backup names automatically, and add and/or remove backups that are (still) accessible automatically. Note that due to the strict naming requirements, the regex must typically be the same as the base name at the moment.
+Using `/REGEX` will use `borg list --json` (Borg 1) or `borg repo-list --json` (Borg 2) to find available backups automatically, and add and/or remove backups that are (still) accessible automatically. Match only the backup set intended for this data tree. Borg 2 snapshots are indexed and restored by their full archive ID, so repeated names and timestamps remain distinct. Synchronizing an old tree with Borg 2 replaces its timestamp-only entries with ID entries. Rebuild the tree if switching back to Borg 1.
+
+For manual changes to Borg 2 trees, use the stored key `YYYY-MM-DD-hhmmss@FULL_ARCHIVE_ID`: `-KEY` removes a snapshot and `+KEY` imports it by ID. Automatic discovery is recommended. Incremental synchronization adds new snapshots before pruning stale entries, and publishes each successful operation separately; `-i` performs one operation per invocation.
 
 For larger backup sets, it requires much less RAM when doing this out-of-core, i.e. incrementally. Instead option `-m` use `-i` for a single iteration, `-a` for repeatedly adding/removing all given backup sets. Using that together with `/REGEX` is probably the most commonly used form (see top of chapter). Incrementally changing the data tree is much slower than in-memory, especially if multiple changes have to be applied.
 
@@ -125,6 +131,8 @@ After selecting the wanted items, one should select the backup date that should 
 
 When the process is finished, the restored entries will show up within the configured restore path in a directory with the backup date and time as name. It is up to the administrator to [remove leftover restoration directories](#Cleanup-restore-directories).
 
+With Borg 2 the directory is `RESTORE/YYYY-MM-DD-hhmmss@ARCHIVE_ID/REQUEST_HANDLE/`. Each request gets an empty directory, as required by Borg 2; repeated restores remain separate. The exact path is recorded in the restore log. Borg 1 keeps the original `RESTORE/YYYY-MM-DD-hhmmss/` layout. Nonzero Borg return codes, including warnings, mark the request as an error so the user can inspect its log.
+
 
 # Bugs, Testing, Limitations, Contributions
 
@@ -156,10 +164,17 @@ Bug tracking is not set up yet.
   Use `null` for "no entry" in write_tree()/read_tree(). Use relative offsets. Relative dates have already been tested, not useful enough for the additional overhead.
 
 
+## Tests
+
+Run `npm install` and `npm test` with Node 22 or 24. The regression suite uses temporary repositories and a Borg fixture, so it needs neither `config.js` nor an installed Borg. It covers all three indexing modes, exact snapshot selection, repeated restores, legacy trees, SSH paths, JSON fields, exit codes, and failure recovery.
+
+To also test real encrypted repositories and selective extraction, set `BORG1_BINARY` and/or `BORG2_BINARY` to absolute executable paths before running `npm test`. Those integration tests are skipped when the variables are absent. CI runs both, using Borg 1.4.5 and 2.0.0b25. The older standalone test scripts mentioned above are separate from this suite.
+
+
 ## Limitations and TODOs
 
 - At the moment, there is no handling of the backup side of borg. That may change in the future.
-- At the moment, borg backups have to be strictly named `BACKUPNAME-YYYY-MM-DD-hhmmss` (e.g. `server-2023-12-31-011505`). That may change in the future.
+- Borg 1 backups and manual imports have to be named `BACKUPNAME-YYYY-MM-DD-hhmmss` (e.g. `server-2023-12-31-011505`). Borg 2 automatic discovery also supports archive series.
 - At the moment there is only trivial all-or-nothing access restriction in place. A role based authentication model and finer granular access controls are planed.
 - There are no archive specific views ATM.
 

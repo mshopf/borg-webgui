@@ -1,0 +1,38 @@
+name: Borg compatibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - run: npm install --no-package-lock
+      - name: Download pinned Borg releases
+        run: |
+          mkdir -p "$RUNNER_TEMP/borg1" "$RUNNER_TEMP/borg2"
+          curl --fail --location --retry 3 https://github.com/borgbackup/borg/releases/download/1.4.5/borg-linux-glibc231-x86_64 -o "$RUNNER_TEMP/borg1/borg"
+          curl --fail --location --retry 3 https://github.com/borgbackup/borg/releases/download/2.0.0b25/borg-linux-glibc239-x86_64-gh -o "$RUNNER_TEMP/borg2/borg"
+          echo "c8457f70660064d0f45b38283ab4cc65b342970012013201d3aec713a75898fb  $RUNNER_TEMP/borg1/borg" | sha256sum --check
+          echo "10112ca0cce2d4bde99cf3d93a9f4cd6bda8cd6f099c8fc4057fa5041d375cf4  $RUNNER_TEMP/borg2/borg" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/borg1/borg" "$RUNNER_TEMP/borg2/borg"
+      - name: Test fixtures and real encrypted repositories
+        run: npm test
+        env:
+          BORG1_BINARY: ${{ runner.temp }}/borg1/borg
+          BORG2_BINARY: ${{ runner.temp }}/borg2/borg
