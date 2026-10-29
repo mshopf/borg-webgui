@@ -20,27 +20,70 @@ const html_selectionstats= document.getElementById ('selectionstats');
 html_backup.innerHTML = escapeHtml (backup);
 html_button.addEventListener ('click', initiate_restore);
 
-html_body.className = 'wait';
+const html_view = document.getElementById ('view');
+const html_archive = document.getElementById ('archive');
+const html_archive_picker = document.getElementById ('archive-picker');
+const html_error = document.getElementById ('browse-error');
+let view = urlParams.get ('view') === 'archive' ? 'archive' : 'files';
+let generation = 0;
+html_view.value = view;
+html_view.addEventListener ('change', () => { view = html_view.value; reload_tree (); });
+html_archive.addEventListener ('change', reload_tree);
 
-fetch ('/api/status', { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }, cache: "no-store"})
-.then (res => res.json())
-.then (json => {
-    config = json.config ?? config;
-    return fetch ('/api/archives/'+backupurl, { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }})
-})
-.then (res => res.json())
-.then (json => {
-    archives = parse_archives (json);
-    return fetch ('/api/data/'+backupurl+'/', { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }});
-})
-.then (res => res.json())
-.then (json => {
-    tree = json;
-    tree.y = false;
-    refs[0] = tree;
-    update_list (html_root, tree);
-    html_body.className = '';
-});
+async function fetch_json (url, options) {
+    const response = await fetch (url, options);
+    if (!response.ok) throw Error ('Request failed (' + response.status + ')');
+    return response.json ();
+}
+function data_url (path, cursor) {
+    const query = view === 'archive' ? '?archive=' + html_archive.value + '&cursor=' + (cursor ?? 0) : '';
+    return '/api/data/' + backupurl + '/' + path.split ('/').filter (part => part !== '').map (encodeURIComponent).join ('/') + query;
+}
+async function reload_tree () {
+    const current = ++generation;
+    html_body.className = 'wait';
+    html_error.textContent = '';
+    html_root.innerHTML = '';
+    html_button.disabled = true;
+    html_selectionstats.textContent = '';
+    html_possibilities.textContent = '';
+    selected_count = selected_size = 0;
+    html_archive_picker.hidden = view !== 'archive';
+    try {
+        const json = await fetch_json (data_url (''));
+        if (current !== generation) return;
+        tree = json;
+        tree.y = false;
+        refs = [tree];
+        global_id = 1;
+        await update_list (html_root, tree);
+    } catch (error) {
+        if (current === generation) html_error.textContent = error.message;
+    } finally {
+        if (current === generation) html_body.className = '';
+    }
+}
+async function initialize () {
+    try {
+        const status = await fetch_json ('/api/status', { cache: 'no-store' });
+        config = status.config ?? config;
+        archives = parse_archives (await fetch_json ('/api/archives/' + backupurl));
+        // Every backup is selectable, including generations where no files changed.
+        for (let i = archives.length - 1; i > 0; i--) {
+            const option = document.createElement ('option');
+            option.value = i;
+            option.textContent = archives[i].name;
+            option.title = archives[i].descr;
+            html_archive.appendChild (option);
+        }
+        await reload_tree ();
+    } catch (error) {
+        html_error.textContent = error.message;
+        html_body.className = '';
+    }
+}
+// Run after refs and global_id have been initialized.
+queueMicrotask (initialize);
 
 function escapeHtml(x) {
     return x .replaceAll ('&', '&amp;') .replaceAll ('<', '&lt;') .replaceAll ('>', '&gt;') .replaceAll ('"', '&quot;');
@@ -94,9 +137,11 @@ async function update_list (root, tree) {
             }
         }
         html_body.className = 'wait';
-        const response = await fetch ('/api/data/' + backupurl + encodeURI (path),
-                                      { headers : { 'Content-Type': 'application/json', 'Accept': 'application/json' }});
-        tree.c = (await response .json ()) .c;
+        const current = generation;
+        const json = await fetch_json (data_url (path));
+        if (current !== generation) return;
+        tree.c = json.c;
+        tree.next = json.next;
         if (tree.y === true) {
             for (const e in tree.c) {
                 tree.c[e].y = true;
@@ -114,7 +159,7 @@ async function update_list (root, tree) {
         }
         entries.push (t.i);
         html += `<li id=${t.i}>`;
-        html += `<div class="${get_selection_classes(t.y)}"><span>${arToDescr (t.a, 5) .join (' ')}</span></div><div class="${get_disclosure_classes(t)}"><div class=sizes>${sizesToDescr (t)}</div>`;
+        html += `<div class="${get_selection_classes(t.y)}"><span>${view === 'archive' ? '' : arToDescr (t.a, 5) .join (' ')}</span></div><div class="${get_disclosure_classes(t)}"><div class=sizes>${sizesToDescr (t)}</div>`;
 
         if (e.startsWith ('/')) {
             html += escapeHtml (e.slice(1));
@@ -128,7 +173,22 @@ async function update_list (root, tree) {
         html += '<span class=pathright></div><div class=sub></div></li>';
     }
     html += '</ul>';
+    if (tree.next != null) html += '<button type=button class=more>Load more entries</button>';
     root.innerHTML = html;
+    root.querySelector (':scope > .more')?.addEventListener ('click', async event => {
+        event.stopPropagation ();
+        const current = generation;
+        event.target.disabled = true;
+        try {
+            const path = path_for_tree (tree);
+            const json = await fetch_json (data_url (path, tree.next));
+            if (current !== generation) return;
+            for (const child of Object.values (json.c)) if (tree.y === true) child.y = true;
+            Object.assign (tree.c, json.c);
+            tree.next = json.next;
+            await update_list (root, tree);
+        } catch (error) { html_error.textContent = error.message; event.target.disabled = false; }
+    });
     for (const id of entries) {
         const elem = document.getElementById (id);
         elem .addEventListener ('click', toggle_dir);
@@ -136,6 +196,15 @@ async function update_list (root, tree) {
         if (refs[id].o) {
             await update_list (elem .querySelector ('.sub'), refs[id]);
         }
+    }
+}
+
+function path_for_tree (target, node = tree, path = '') {
+    if (target === node) return path;
+    for (const [name, child] of Object.entries (node.c ?? {})) {
+        if (!name.startsWith ('/')) continue;
+        const found = path_for_tree (target, child, path + name);
+        if (found !== undefined) return found;
     }
 }
 
@@ -200,7 +269,7 @@ function arToSelect (array, name) {
                 if (count > 1) {
                     str += '('+count+')';
                 }
-                html += `<option value="${id}" title="${escapeHtml(long)}">${str}</span>`;
+                html += `<option value="${id}" title="${escapeHtml(long)}">${str}</option>`;
             }
             last  = Math.abs(a);
             id    = last;
@@ -249,7 +318,8 @@ async function toggle_dir (evt) {
     }
     if (! t.o) {
         t.o = true;
-        await update_list (this .querySelector ('.sub'), t);
+        try { await update_list (this .querySelector ('.sub'), t); }
+        catch (error) { t.o = false; html_error.textContent = error.message; html_body.className = ''; }
     } else {
         t.o = false;
         this .querySelector ('.sub') .innerHTML = '';
@@ -273,7 +343,8 @@ function set_selection_up (t, y) {
             count += 2;
         }
     }
-    if (count === list.length * 2) {
+    const parent = refs[elem.parentNode.parentNode.parentNode.parentNode.id];
+    if (count === list.length * 2 && parent?.next == null) {
         selected = true;
     } else if (count === 0) {
         selected = undefined;
@@ -314,6 +385,12 @@ function toggle_entry (evt) {
     set_selection_down (t, t.y);
     var ar;
     [ar, selected_count, selected_size] = find_available_archives (tree, null);
+    if (view === 'archive') {
+        html_possibilities.textContent = archives[html_archive.value].name;
+        html_button.disabled = selected_count === 0;
+        html_selectionstats.textContent = selected_count === 0 ? '' : 'Selected elements: ' + sizesToDescr ({ C: selected_count, S: selected_size });
+        return;
+    }
     html_possibilities.innerHTML = arToSelect (ar, 'ar');
     html_button.disabled = true;
     if (ar == null || ar.length == 0) {
@@ -332,8 +409,8 @@ function toggle_select () {
 function find_available_archives (t, ar) {
     // Endpoint - either single file or fully to be restored dir
     if (t.y === true) {
-        return [merge_ar (ar, t.a?.length > 0 ? t.a : null),
-                t.C !== undefined ? t.C : 1,
+        return [view === 'archive' ? null : merge_ar (ar, t.a?.length > 0 ? t.a : null),
+                t.C !== undefined ? t.C + 1 : 1,
                 t.S !== undefined ? t.S : t.s !== undefined ? t.s : 0];
     }
     // Nothing to restore below
@@ -341,7 +418,7 @@ function find_available_archives (t, ar) {
         return [ar, 0, 0];
     }
     // Descend if anything below
-    var count = 1, size = 0;
+    var count = t === tree ? 0 : 1, size = 0;
     for (const e in t.c) {
         const [a, c, s] = find_available_archives (t.c[e], ar);
         ar = merge_ar (ar, a);
@@ -400,7 +477,7 @@ function find_end_paths (t, p, list) {
 }
 
 async function initiate_restore () {
-    const ar = document.querySelector('select[name=ar]').value;
+    const ar = view === 'archive' ? html_archive.value : document.querySelector('select[name=ar]').value;
     if (ar == null) {
         console.log ('this should not happen');
         return;
@@ -410,7 +487,7 @@ async function initiate_restore () {
         confirm (`Are you REALLY sure to start the restore process on the selected files from archive ${name}?\n\nYou will be restoring\n... ${selected_count} elements\nwith a total size of\n... ${sizesToDescr({S: selected_size})}\n\n- which is quite a lot!!!`)) {
         const list = [];
         find_end_paths (tree, '', list);
-        obj = { archive: name, list: list.sort() };
+        const obj = { archive: name, list: list.sort() };
         try {
             html_body.className = 'wait';
             const response = await fetch ('/api/restore/' + backupurl,
