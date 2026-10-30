@@ -19,7 +19,8 @@
     "start": "npm run build && node --enable-source-maps server.js",
     "test": "npm run build && node --test test/*.test.js",
     "lint": "eslint .",
-    "check": "npm run typecheck && npm run lint && npm test"
+    "check": "npm run typecheck && npm run lint && npm test",
+    "setup": "npm run build && node dist/setup.js"
   },
   "author": "",
   "license": "ISC",

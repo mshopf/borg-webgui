@@ -88,7 +88,7 @@ if (fs.existsSync(marker)) { fs.unlinkSync(marker); process.exitCode = 2; }
     const succeeded = await (await post ({ archive: '2024-01-01-120000', list: ['dir/'] })).json ();
     await waitForOutput ('Finished restore process ' + failed);
     await waitForOutput ('Finished restore process ' + succeeded);
-    const status = await (await fetch (url + '/api/status')).json ();
+    const status = await (await fetch (url + '/api/status', { headers })).json ();
     assert.equal (status.state.find (entry => entry.handle === failed).state, 'err');
     const done = status.state.find (entry => entry.handle === succeeded);
     assert.equal (done.state, 'done');
@@ -108,7 +108,7 @@ if (fs.existsSync(marker)) { fs.unlinkSync(marker); process.exitCode = 2; }
     await fs.rename (path.join (dir, 'bin/borg'), path.join (dir, 'bin/borg-disabled'));
     const missing = await (await post ({ archive: '2024-01-01-120000', list: ['dir/file'] })).json ();
     await waitForOutput ('Finished restore process ' + missing);
-    const missingStatus = await (await fetch (url + '/api/status')).json ();
+    const missingStatus = await (await fetch (url + '/api/status', { headers })).json ();
     assert.equal (missingStatus.state.find (entry => entry.handle === missing).state, 'err');
     await assert.rejects (fs.access ('/tmp/borg-restore-' + missing + '.patterns'));
     const reloaded = waitForOutput ('re-loaded config');
@@ -116,7 +116,7 @@ if (fs.existsSync(marker)) { fs.unlinkSync(marker); process.exitCode = 2; }
         .replace ('"auth":', '"client_config":{"max_restore_entries_trivial":7},"auth":'));
     await fs.rename (path.join (dir, 'config.js.new'), path.join (dir, 'config.js'));
     await reloaded;
-    assert.equal ((await (await fetch (url + '/api/status')).json ()).config.max_restore_entries_trivial, 7);
+    assert.equal ((await (await fetch (url + '/api/status', { headers })).json ()).config.max_restore_entries_trivial, 7);
     const pages = await Promise.all (Array.from ({ length: 6 }, () => request ('/api/data/api/dir?archive=1').then (res => res.json ())));
     assert.ok (pages.every (page => page.c.file.s === 5));
 });

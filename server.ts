@@ -10,10 +10,17 @@ import { promises as stream_p } from 'node:stream';
 import cp from 'node:child_process';
 import crypto from 'node:crypto';
 import byline from 'byline';
-import argon2 from 'argon2';
 import DBuffer from './dbuffer';
 import { withTree, browseArchive, browseFiles } from './archive-browse';
-import { parseConfig, readConfig } from './config';
+import { readConfig, configurationFile } from './config';
+import { ManagementStore, configurationDirectory } from './management-store';
+import { AccessControl, protectMutation } from './access-control';
+import { managementRouter } from './management-api';
+import { BackupService } from './backup-runtime';
+import { createBackupExecutor, treeFile } from './backup-engine';
+import { credentialEnvironment } from './backup-process';
+import { allowed } from './management-schema';
+import { ZodError } from 'zod';
 import type { DataConfig, TreeEntry, StatusEntry, RestoreInput, RestoreJob } from './types';
 
 // Express 4 does not forward rejected async handlers to error middleware.
@@ -24,31 +31,36 @@ function background (task: Promise<unknown>): void {
     void task.catch ((error: unknown) => { console.error (error); });
 }
 
+async function main (): Promise<void> {
 const app      = express ();
 const trees: Record<string, TreeEntry> = {};
 const queue: (StatusEntry | RestoreJob)[] = [];
 let queue_active = 0;
 
 let config = readConfig ();
+const store = await ManagementStore.open (configurationDirectory (), config);
+const access = new AccessControl (store);
+const managedTrees = new Set<string> ();
+const service = await BackupService.open (store, path.resolve ('var'), createBackupExecutor (async () => { await syncManagedTrees (); }));
+const servers = new Set<http.Server> ();
 
 let watching_config = false;
 let watcher_config: fs.FSWatcher | undefined;
 function setup_watch_config () {
     watcher_config?.close ();
-    watcher_config = fs.watch ('./config.js', { persistent: false }, () => { background (load_config ()); });
+    watcher_config = fs.watch (configurationFile (), { persistent: false }, () => { load_config (); });
 }
-async function load_config () {
+function load_config () {
     if (watching_config) {
         return;
     }
     watching_config = true;
     try {
-        const str = await fs_p.readFile ('./config.js', 'utf8');
-        config = parseConfig (str);
+        config = readConfig ();
         console.log ('re-loaded config');
         setup_watch_config ();
     } catch {
-        setTimeout (() => { background (load_config ()); }, 5000);
+        setTimeout (() => { load_config (); }, 5000);
     }
     watching_config = false;
 }
@@ -162,6 +174,27 @@ async function openTree (conf: DataConfig & { db?: DBuffer }) {
     return name[2];
 }
 
+async function syncManagedTrees (): Promise<void> {
+    const definitions = store.snapshot ().backups.filter (backup => backup.index);
+    const ids = new Set (definitions.map (backup => backup.id));
+    for (const id of managedTrees) if (!ids.has (id)) {
+        watcher_tree[id]?.close (); delete watcher_tree[id];
+        const entry = trees[id];
+        if (entry) await withTree (entry, async () => { await entry.db.close (); delete trees[id]; });
+        managedTrees.delete (id);
+    }
+    for (const backup of definitions) {
+        const file = treeFile (backup);
+        try { await fs_p.access (file); } catch { continue; }
+        const previous = trees[backup.id];
+        const conf: DataConfig = { file, restore: path.resolve (backup.restoreDirectory, backup.id), enable: true, borg_repo: backup.repository, credentialId: backup.credentialId };
+        if (previous) {
+            previous.restore = conf.restore; previous.borg_repo = backup.repository; previous.credentialId = backup.credentialId;
+        } else { await openTree (conf); setup_watch_tree (backup.id); }
+        managedTrees.add (backup.id);
+    }
+}
+
 async function openAll () {
     for (const f of config.data) {
         if (! f.enable) {
@@ -174,29 +207,13 @@ async function openAll () {
             console.error ('opening '+f.file+': '+String (e));
         }
     }
+    await syncManagedTrees ();
     console.log ('All data opened successfully');
     console.log ('Memory Usage: '+ process.memoryUsage().heapUsed/(1024*1024) + ' MB');
 }
 // data will only be available after it has been successfully loaded
 // await is not available outside async
 background (openAll ());
-
-// Middleware for checking passwords
-async function check_passwd (req: Request, res: Response, next: NextFunction) {
-    // parse login and password from headers
-    const b64auth = (req.headers.authorization || '') .split(' ')[1] || '';
-    const strauth = Buffer.from (b64auth, 'base64') .toString();
-    const [, user, password] = strauth.match (/(.*?):(.*)/) || [];
-    // verify
-    if (user != null && config.auth[user] !== undefined && password != null &&
-        await argon2.verify (config.auth[user].pwd, password)) {
-        return next();
-    }
-    // access denied...
-    res .setHeader ('WWW-Authenticate', 'Basic realm="borg-backup"');
-    res .status (401) .send ('Authentication required.');
-}
-
 
 config.hook_preroutes?. (app);
 
@@ -205,30 +222,41 @@ app.use (express.urlencoded ({ extended: true }));
 
 app.use (express.static (path.join (__dirname, '..', 'public')));
 
-app.use ('/log/', asyncHandler (check_passwd));
-app.use ('/log/', express.static (path.resolve ('log')));
+app.get ('/log/:filename', asyncHandler (access.authenticate), (req, res) => {
+    const filename = req.params.filename;
+    if (!filename || !/^[a-f0-9]{8}\.log$/.test (filename)) return res.status (404).end ();
+    const user = access.principal (req);
+    const item = queue.find (entry => entry.handle === filename.slice (0, -4));
+    if (!user.admin && (!item || !('backup' in item) || !allowed (user, item.backup, 'restore'))) return res.status (403).end ();
+    return res.type ('text/plain').sendFile (filename, { root: path.resolve ('log') });
+});
 express.static.mime.define ({'text/plain': ['log']});
+
+app.use ('/api/', asyncHandler (access.authenticate));
+app.use ('/api/', protectMutation);
+app.use ('/api/admin', managementRouter (store, service, access, syncManagedTrees, () => config.data.map (entry => path.basename (entry.file).replace (/-data-tree\.bin$/, ''))));
 
 app.get ('/api/status', function (req, res) {
     console.log (`* api/status`);
     const response: { backups: Record<string, number>; state: StatusEntry[]; config: typeof config.client_config } = { backups: {}, state: [], config: config.client_config };
     for (const [name, entry] of Object.entries (trees)) {
-        response.backups[name] = entry.archives.length - 1;
+        if (allowed (access.principal (req), name, 'browse')) response.backups[name] = entry.archives.length - 1;
     }
-    response.state = queue.map (({handle, state, info, tschedule, texecute, tfinish, short, archive}) =>
+    response.state = queue.filter (item => access.principal (req).admin || ('backup' in item && allowed (access.principal (req), item.backup, 'restore'))).map (({handle, state, info, tschedule, texecute, tfinish, short, archive}) =>
         ({handle, state, info, tschedule, texecute, tfinish, short, archive}));
-    res.json (response);
+    const user = access.principal (req);
+    res.json ({ ...response, admin: user.admin, scheduled: store.snapshot ().backups.filter (backup => allowed (user, backup.id, 'browse') || allowed (user, backup.id, 'run')).map (backup => ({ id: backup.id, name: backup.name, enabled: backup.enabled, nextRun: service.nextRuns ()[backup.id], canRun: allowed (user, backup.id, 'run') })), backupRuns: service.runs ().filter (run => allowed (user, run.backupId, 'run')) });
 });
 
-app.use ('/api/', asyncHandler (check_passwd));
-
 app.get ('/api/archives/:backup', function (req, res) {
+    access.require (req, req.params.backup, 'browse');
     const entry = trees[req.params.backup];
     if (!entry) return res.status (404).send (null);
     return res.json (entry.archives);
 });
 
 app.get ('/api/data/:backup/:path(*)', asyncHandler<{ backup: string; path: string }> (async function (req, res) {
+    access.require (req, req.params.backup, 'browse');
     console.log (`* api/data ${req.params.backup} ${req.params.path}`);
     const entry = trees[req.params.backup];
     if (entry === undefined) {
@@ -254,6 +282,7 @@ app.get ('/api/data/:backup/:path(*)', asyncHandler<{ backup: string; path: stri
 }));
 
 app.post<{ backup: string }, unknown, unknown> ('/api/restore/:backup', function (req, res) {
+    access.require (req, req.params.backup, 'restore');
     console.log (`* api/restore ${req.params.backup}`);
     const body = req.body;
     if (typeof body !== 'object' || body === null || !('archive' in body) || !('list' in body) ||
@@ -379,7 +408,8 @@ async function execute_borg_extract (q: RestoreJob): Promise<{ error?: string; l
         log.write ('borg '+args.join(' ')+'\n');
         log.write ('\n***********\n\n');
 
-        const borg         = cp.spawn ('borg', args, {stdio: ['ignore', 'pipe', 'pipe'], cwd });
+        const credential = store.snapshot ().credentials.find (item => item.id === entry.credentialId);
+        const borg         = cp.spawn ('borg', args, {stdio: ['ignore', 'pipe', 'pipe'], cwd, env: credentialEnvironment (credential) });
         const borg_promise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }> ((resolve, reject) => {
             borg.once ('error', reject);
             borg.once ('close', (code, signal) => resolve ({ code, signal }));
@@ -422,11 +452,12 @@ async function execute_borg_extract (q: RestoreJob): Promise<{ error?: string; l
 
 
 app.use ((error: unknown, _req: Request, res: Response, next: NextFunction) => {
-    console.error (error);
+    if (error instanceof ZodError) { res.status (400).json ({ error: error.issues.map (issue => issue.path.join ('.') + ': ' + issue.message).join ('; ') }); return; }
+    console.error (error instanceof Error ? error.message : 'Request failed');
     if (res.headersSent) { next (error); return; }
     const status = typeof error === 'object' && error !== null && 'status' in error &&
         typeof error.status === 'number' && error.status >= 400 && error.status < 600 ? error.status : 500;
-    res.status (status).json ({ error: status < 500 ? 'Invalid request' : 'Request failed' });
+    res.status (status).json ({ error: status < 500 && error instanceof Error ? error.message : 'Request failed' });
 });
 
 config.hook_postroutes?. (app);
@@ -450,6 +481,7 @@ if (config.httpPort !== undefined) {
     } else {
         http .createServer (app) .listen (config.httpPort, function (this: http.Server) {
             console.log ('Express http server listening on port ' + config.httpPort);
+            servers.add (this); service.start ();
             config.hook_poststartup?. (app, this);
         });
     }
@@ -463,6 +495,22 @@ if (config.httpsPort !== undefined) {
     };
     https.createServer (ssl_opts, app) .listen (config.httpsPort, function (this: https.Server) {
         console.log ('Express https server listening on port ' + config.httpsPort);
+        servers.add (this); service.start ();
         config.hook_poststartup?. (app, this);
     });
 }
+
+let shuttingDown = false;
+const shutdown = () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    background ((async () => {
+        for (const server of servers) { server.close (); server.closeIdleConnections (); }
+        await service.stop ();
+        for (const entry of Object.values (trees)) await entry.db.close ();
+        process.exit (0);
+    }) ());
+};
+process.once ('SIGTERM', shutdown); process.once ('SIGINT', shutdown);
+}
+void main ().catch ((error: unknown) => { console.error (error instanceof Error ? error.message : error); process.exit (1); });

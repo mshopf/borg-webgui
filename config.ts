@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
+import path from 'node:path';
 import type { Config, DataConfig } from './types';
 
 function object (value: unknown, label: string): Record<string, unknown> {
@@ -32,6 +33,9 @@ function hook<T extends (...args: never[]) => void> (value: unknown, label: stri
 /** config.js remains an executable object expression, including existing hooks. */
 export function parseConfig (source: string): Config {
     const input: unknown = eval ('(' + source + ')');
+    return parseConfigValue (input);
+}
+export function parseConfigValue (input: unknown): Config {
     const value = object (input, 'config');
     if (!Array.isArray (value.data)) throw Error ('config.data must be an array');
     const data: DataConfig[] = value.data.map ((item: unknown) => {
@@ -45,7 +49,7 @@ export function parseConfig (source: string): Config {
         };
     });
     const auth: Config['auth'] = {};
-    for (const [name, user] of Object.entries (object (value.auth, 'auth'))) {
+    for (const [name, user] of Object.entries (object (value.auth ?? {}, 'auth'))) {
         auth[name] = { pwd: string (object (user, 'auth user').pwd, 'pwd') };
     }
     const client = object (value.client_config ?? {}, 'client_config');
@@ -65,6 +69,15 @@ export function parseConfig (source: string): Config {
         hook_poststartup: hook (value.hook_poststartup, 'hook_poststartup')
     };
 }
+export function configurationFile (): string {
+    const json = path.resolve (process.env.BORG_WEBGUI_CONFIG_DIR ?? './etc', 'server.json');
+    return existsSync (json) ? json : path.resolve ('config.js');
+}
 export function readConfig (): Config {
-    return parseConfig (readFileSync ('./config.js', 'utf8'));
+    const filename = configurationFile ();
+    if (filename.endsWith ('.json')) {
+        const value: unknown = JSON.parse (readFileSync (filename, 'utf8'));
+        return parseConfigValue (value);
+    }
+    return parseConfig (readFileSync (filename, 'utf8'));
 }

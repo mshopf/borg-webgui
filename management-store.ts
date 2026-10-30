@@ -23,7 +23,7 @@ export class ManagementStore {
         } catch (error) {
             if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error;
             document = managementSchema.parse ({ version: 1, backups: [], credentials: [], users:
-                Object.entries (legacy?.auth ?? {}).map (([id, user]) => ({ id, passwordHash: user.pwd, enabled: true, admin: true, grants: [] })) });
+                Object.entries (legacy?.auth ?? {}).map (([id, user], index) => ({ id, passwordHash: user.pwd, enabled: true, admin: id === 'admin' || (!Object.hasOwn (legacy?.auth ?? {}, 'admin') && index === 0), grants: [{ backup: '*', browse: true, restore: true, run: false }] })) });
             // Exclusive creation avoids overwriting a concurrent first-time setup.
             await fs.writeFile (filename, JSON.stringify (document, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
         }

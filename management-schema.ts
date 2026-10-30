@@ -23,7 +23,7 @@ const common = {
     credentialId: idSchema.optional (),
     schedule: scheduleSchema.default (() => scheduleSchema.parse ({})),
     exclusions: z.array (line).max (1000).default ([]),
-    templates: z.array (z.enum (['linux', 'caches', 'trash', 'development', 'webgui'])).max (5).default (['linux', 'caches', 'trash', 'webgui']),
+    templates: z.array (z.enum (['linux', 'caches', 'trash', 'development', 'webgui', 'provided', 'provided-replacement'])).max (7).default (['linux', 'caches', 'trash', 'webgui']),
     compression: z.enum (['lz4', 'zstd,3', 'zstd,6', 'none']).default ('lz4'),
     oneFileSystem: z.boolean ().default (true),
     excludeCaches: z.boolean ().default (true),

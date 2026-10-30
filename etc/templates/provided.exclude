@@ -1,0 +1,77 @@
+#
+# /
+#
+
+*.cache
+*/compile-cache
+/var/cache
+/var/tmp/*
+/tmp/*
+/usr/src/linux-*
+/root/.beagle
+/var/lib/locatedb
+/dev/*
+/proc/*
+/sys/*
+/run/*
+*/lost+found
+
+# running backup
+/local/log/borg/borg-*.log
+/root/.config/borg/security/*/nonce
+
+#
+# /data
+#
+/data/backup
+
+#
+# /fast
+#
+
+#
+# /old
+#
+
+# Trash
+*/.Trash-1000
+*/.recycle
+
+# Cache files
+/root/.cache
+/local/home/*/.unison/backup*
+/local/home/*/.unison/unison.log
+/local/home/*/.unison/ar[0-9a-f]*
+/local/home/*/.mozilla/*/*/Cache*
+/local/home/*/.mozilla/*/*/lock
+/local/home/*/.ooo-*/*/*/*cache
+/local/home/*/.kde/cache-*
+/local/home/*/.kde/socket-*
+/local/home/*/.kde/tmp-*
+/local/home/*/.java/deployment/cache
+/local/home/*/.mcop/trader-cache
+/local/home/*/.cache
+/local/home/*/*.cache
+/local/home/*/.wapi
+/local/home/*/.recently-used
+/local/home/*/.beagle
+/local/home/*/.googleearth/Cache
+/local/home/*/.opera/cache4/
+/local/home/*/.galeon/mozilla/galeon/Cache/
+/local/home/*/.compose-cache
+/local/home/*/.fonts.cache*
+/local/home/*/.dvd*
+/local/home/*/.trash_entry_cache
+/local/home/*/.config/discord/Code Cache/
+/local/home/*/.config/discord/Cache/
+/local/home/*/.config/*/GPUCache/
+/local/home/*/.config/*/Cache/
+/local/home/*/.config/*/CacheStorage/
+/local/home/*/.config/*/ScriptCache/
+/local/home/*/.steam/steam/config/htmlcache/
+/local/home/*/.steam/steam/appcache/
+/local/home/*/.npm/_cacache
+
+# Other unnecessary files
+*/.thumbnails
+

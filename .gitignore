@@ -5,3 +5,9 @@ log
 config.js
 
 dist/
+
+var/
+restore/
+etc/management.json
+etc/server.json
+etc/*.tmp
