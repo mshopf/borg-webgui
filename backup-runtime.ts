@@ -90,18 +90,19 @@ export class BackupService {
         });
         this.controllers.set (run.id, controller);
         this.work = this.work.catch (() => {}).then (async () => {
+            let executionSignal: AbortSignal | undefined;
             try {
                 if (controller.signal.aborted || this.stopped) { await this.finish (run.id, 'cancelled', 'Cancelled before starting'); return; }
                 await this.change (state => {
                     const current = state.runs.find (item => item.id === run.id);
                     if (current) { current.state = 'running'; current.startedAt = new Date ().toISOString (); current.message = 'Running'; }
                 });
-                const signal = AbortSignal.any ([controller.signal, AbortSignal.timeout (backup.timeoutMinutes * 60000)]);
+                const signal = executionSignal = AbortSignal.any ([controller.signal, AbortSignal.timeout (backup.timeoutMinutes * 60000)]);
                 const code = await this.execute (backup, credential, run, signal);
                 await this.finish (run.id, signal.aborted ? 'cancelled' : code === 0 ? 'done' : code === 1 ? 'warning' : 'error', signal.aborted ? 'Cancelled or timed out' : code < 2 ? 'Backup operation finished' : 'Backup operation failed; see log', code);
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Backup failed';
-                await this.finish (run.id, controller.signal.aborted ? 'cancelled' : 'error', credential?.passphrase ? message.replaceAll (credential.passphrase, '[redacted]') : message, 2);
+                await this.finish (run.id, executionSignal?.aborted || controller.signal.aborted ? 'cancelled' : 'error', credential?.passphrase ? message.replaceAll (credential.passphrase, '[redacted]') : message, 2);
             } finally { this.controllers.delete (run.id); }
         });
         // Observe persistence failures without allowing an unhandled background rejection.

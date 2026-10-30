@@ -245,7 +245,8 @@ app.get ('/api/status', function (req, res) {
     response.state = queue.filter (item => access.principal (req).admin || ('backup' in item && allowed (access.principal (req), item.backup, 'restore'))).map (({handle, state, info, tschedule, texecute, tfinish, short, archive}) =>
         ({handle, state, info, tschedule, texecute, tfinish, short, archive}));
     const user = access.principal (req);
-    res.json ({ ...response, admin: user.admin, scheduled: store.snapshot ().backups.filter (backup => allowed (user, backup.id, 'browse') || allowed (user, backup.id, 'run')).map (backup => ({ id: backup.id, name: backup.name, enabled: backup.enabled, nextRun: service.nextRuns ()[backup.id], canRun: allowed (user, backup.id, 'run') })), backupRuns: service.runs ().filter (run => allowed (user, run.backupId, 'run')) });
+    const nextRuns = service.nextRuns ();
+    res.json ({ ...response, admin: user.admin, scheduled: store.snapshot ().backups.filter (backup => allowed (user, backup.id, 'browse') || allowed (user, backup.id, 'run')).map (backup => ({ id: backup.id, name: backup.name, enabled: backup.enabled, nextRun: nextRuns[backup.id], canRun: allowed (user, backup.id, 'run') })), backupRuns: service.runs ().filter (run => allowed (user, run.backupId, 'run')) });
 });
 
 app.get ('/api/archives/:backup', function (req, res) {

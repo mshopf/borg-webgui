@@ -119,4 +119,18 @@ if (fs.existsSync(marker)) { fs.unlinkSync(marker); process.exitCode = 2; }
     assert.equal ((await (await fetch (url + '/api/status', { headers })).json ()).config.max_restore_entries_trivial, 7);
     const pages = await Promise.all (Array.from ({ length: 6 }, () => request ('/api/data/api/dir?archive=1').then (res => res.json ())));
     assert.ok (pages.every (page => page.c.file.s === 5));
+    // Backup browsing and restoration are separate grants; the real server must enforce both.
+    const adminConfig = await (await request ('/api/admin/configuration')).json ();
+    const readerPassword = 'reader-long-password';
+    const userResponse = await fetch (url + '/api/admin/users/reader', { method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json', 'X-Borg-Admin': '1' },
+        body: JSON.stringify ({ revision: adminConfig.revision, user: { id: 'reader', password: readerPassword, enabled: true, admin: false, grants: [{ backup: 'api', browse: true, restore: false, run: false }] } }) });
+    assert.equal (userResponse.status, 200);
+    const readerHeaders = { Authorization: 'Basic ' + Buffer.from ('reader:' + readerPassword).toString ('base64') };
+    assert.equal ((await fetch (url + '/api/data/api/?archive=1', { headers: readerHeaders })).status, 200);
+    assert.equal ((await fetch (url + '/api/data/other/?archive=1', { headers: readerHeaders })).status, 403);
+    assert.equal ((await fetch (url + '/api/restore/api', { method: 'POST', headers: { ...readerHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify ({ archive: '2024-01-01-120000', list: ['dir/file'] }) })).status, 403);
+    const readerStatus = await (await fetch (url + '/api/status', { headers: readerHeaders })).json ();
+    assert.equal (readerStatus.state.length, 0);
+    assert.equal ((await fetch (url + '/log/' + succeeded + '.log', { headers: readerHeaders })).status, 403);
+
 });
