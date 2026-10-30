@@ -89,7 +89,7 @@ test ('local create/prune, warning/error exits, encryption initialization and lo
     const initialization = run ('initialize');
     assert.equal (await execute (backup ({ repository: path.resolve ('repositories/new') }), secret, initialization, new AbortController ().signal), 0);
     assert.ok ((await commands ()).at (-1).includes ('repokey-blake2'));
-    await assert.rejects (execute (backup ({}), undefined, run ('initialize'), new AbortController ().signal), /passphrase/);
+    await assert.rejects (execute (backup ({ repository: path.resolve ('repositories/missing-passphrase') }), undefined, run ('initialize'), new AbortController ().signal), /passphrase/);
 });
 
 test ('pull starts restricted local Borg serve, passes secrets on SSH stdin, prunes locally and cleans sockets', async t => {

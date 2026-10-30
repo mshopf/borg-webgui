@@ -73,3 +73,11 @@ echo the test password and created JSON settings plus an Argon2-hashed admin.
 Generated SSH scripts passed POSIX shell syntax checking with quoted source paths
 and a multiline passphrase. Tests use temporary repositories and fake Borg/SSH
 executables; production repositories were not accessed.
+
+## CI portability check
+
+GitHub's unprivileged runner exposed one test fixture that attempted to create
+`/backup` while testing a missing initialization passphrase. The fixture now uses
+its own temporary repository directory. Production code is unchanged after the
+clean fourth review. The full `npm run check` suite also passes as an unprivileged
+user, including all 30 tests.
