@@ -20,7 +20,44 @@ The icon is apparently public domain, origins unclear.
 
 # Setup
 
-borg-webgui is implemented as a node/express server, a pure javascript client, and a node based tool for incrementally writing the compressed data structure the express server works with. By working with out-of-core data structures it is designed to work with huge and lots of backup sets.
+borg-webgui is implemented as a TypeScript Node/Express server, a pure JavaScript client, and a Node based tool for incrementally writing the compressed data structure the express server works with. By working with out-of-core data structures it is designed to work with huge and lots of backup sets.
+
+
+## Install, build, and check
+
+Use Node.js 24 or newer. Install the locked dependencies and build the server:
+
+```Shell
+npm ci
+npm run build
+```
+
+The server and browsing services are strict TypeScript, with checks for possibly
+missing array/map entries. `npm run build` and `npm run typecheck` use TypeScript **7.0.2**
+(the native `tsc`, installed as `@typescript/native`). The `typescript` dependency
+is an alias for `@typescript/typescript6` **6.0.2**, used only by typescript-eslint's
+compiler API. This follows [TypeScript's side-by-side installation guidance](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-60).
+The compiler commands never use that older version.
+
+`npm run lint` checks the TypeScript server for unsafe values, unhandled promises,
+misused async callbacks, explicit `any`, and non-null assertions, and checks common
+JavaScript correctness rules in the CLI, binary reader, client, and tests.
+`config.js`/`config_example.js` remain executable object expressions and are
+validated at load time; the legacy `test_data.js` fixture script is excluded.
+
+```Shell
+npm run check        # typecheck, lint, build, and regression tests
+npm start            # build, then start server with source maps
+```
+
+The existing `node ./server.js` command still works after building. Compiled files
+and source maps live in `dist/`, which is not committed. The shared binary reader
+and tree-building CLI remain JavaScript; `dbuffer.d.ts` describes the binary
+reader boundary used by the server. Configuration, data, log, and SSL paths remain
+relative to the working directory, and static assets remain in `public/`.
+
+CI runs the same checks on Node.js 24. When updating dependencies, retain the
+lockfile and both TypeScript aliases so building and linting stay reproducible.
 
 
 ## Configuration
@@ -87,7 +124,7 @@ For larger backup sets, it requires much less RAM when doing this out-of-core, i
 > [!NOTE]
 > The server is started with
 > ```Shell
-> `node ./server.js
+> npm start
 > ```
 
 Server log is printed to stdout. See [the script section below](#Server-startup) for a typical startup script.
@@ -215,8 +252,9 @@ cd /local/srv/borg-webgui || exit 1
 mkdir -p log
 log=log/server-`date +'%Y%m%d-%H%M%S'`.log
 exec >$log 2>&1 </dev/null
-pkill -f 'node ./server.js'
-nohup node ./server.js &
+pkill -f 'node .*server.js'
+npm run build || exit 1
+nohup node --enable-source-maps ./server.js &
 ```
 
 ## Cleanup restore directories

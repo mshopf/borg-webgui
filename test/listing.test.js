@@ -5,7 +5,7 @@ const { JSDOM } = require ('jsdom');
 
 const html = fs.readFileSync (require.resolve ('../public/listing.html'), 'utf8');
 const script = fs.readFileSync (require.resolve ('../public/listing.js'), 'utf8');
-const settle = async () => { for (let i = 0; i < 20; i++) await new Promise (resolve => setImmediate (resolve)); };
+const settle = async () => { for (let i = 0; i < 20; i++) await new Promise (resolve => { setImmediate (resolve); }); };
 
 test ('backup-first selection, paging, lazy directories, special names and restore', async t => {
     const dom = new JSDOM (html, { url: 'http://localhost/listing.html?backup=test&view=archive', runScripts: 'outside-only' });

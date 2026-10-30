@@ -285,7 +285,6 @@ async function add_full_archive (archivename, file, name, tree) {
             const last_a = oldnode.a[oldnode.a.length-1];
             if (last_a === archive || last_a === -archive) {
                 throw Error ('duplicate archive in entry');
-                return;
             }
             if (oldnode.s !== n.s || oldnode.t !== n.t || oldnode.l !== n.l) {
                 n.a.push (-archive);
