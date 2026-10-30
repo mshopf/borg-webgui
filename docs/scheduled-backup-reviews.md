@@ -63,4 +63,13 @@ repository/restore exclusions have dedicated coverage.
 
 ## Round 4
 
-Separate review pending after the round-3 fixes.
+No negative findings. The separate reviewer checked the full feature against
+`694f693`, verified the prior fixes, and independently ran `npm run check`:
+TypeScript checking, typed ESLint and all 30 tests passed.
+
+The review loop stops after this clean fourth pass, within the requested maximum
+of five. Interactive setup was also exercised in a temporary terminal: it did not
+echo the test password and created JSON settings plus an Argon2-hashed admin.
+Generated SSH scripts passed POSIX shell syntax checking with quoted source paths
+and a multiline passphrase. Tests use temporary repositories and fake Borg/SSH
+executables; production repositories were not accessed.
