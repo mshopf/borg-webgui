@@ -12,7 +12,7 @@ test ('authenticated API serves snapshots, union trees and rejects invalid queri
     t.after (() => fs.rm (dir, { recursive: true, force: true }));
     const config = { httpPort: 0, data: [{ file: 'api-data-tree.bin', restore: 'restore', enable: true }],
         auth: { test: { pwd: await argon2.hash ('password') } }, max_cache_entries: 10, max_status_entries: 10 };
-    const configSource = '({...' + JSON.stringify (config) + ', httpPort: "0", hook_poststartup(app, server) { console.log("TEST_PORT=" + server.address().port); }})';
+    const configSource = '({...' + JSON.stringify (config) + ', hook_poststartup(app, server) { console.log("TEST_PORT=" + server.address().port); }})';
     await fs.writeFile (path.join (dir, 'config.js'), configSource);
     const filename = '2024-01-01-120000.json';
     await fs.writeFile (path.join (dir, filename), JSON.stringify ({ type: '-', path: 'dir/file', size: 5, isomtime: '2024-01-01T12:00:00' }));

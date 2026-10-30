@@ -5,7 +5,7 @@ const os = require ('node:os');
 const path = require ('node:path');
 const { spawnSync } = require ('node:child_process');
 const DBuffer = require ('../dbuffer');
-const { browseArchive, withTree } = require ('../archive-browse');
+const { browseArchive, withTree } = require ('../dist/archive-browse');
 const cli = path.resolve (__dirname, '../tree.js');
 
 function file (name, size = 1) {
