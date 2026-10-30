@@ -319,96 +319,114 @@ async function run_queue () {
 }
 
 async function execute_borg_extract (q: RestoreJob): Promise<{ error?: string; lines: number }> {
-    // We write the first few lines and all patterns asynchronously to log - might buffer up, but who cares
+    await fs_p.mkdir ('log', { recursive: true });
+    const patternPath = '/tmp/borg-restore-' + q.handle + '.patterns';
     const log = fs.createWriteStream ('log/'+q.handle+'.log', { flags: 'w', mode: 0o644 });
     // use absolute path for patterns, as borg runs in a directory somewhere else
-    const pat = await fs_p.open ('/tmp/borg-restore-'+q.handle+'.patterns', 'w', 0o644);
-    // Make log data human readable
-    const qlog = { ... q, texecute: new Date (q.texecute ?? Date.now ()) .toLocaleString(), tschedule: new Date (q.tschedule) .toLocaleString() };
-    log.write (JSON.stringify (qlog, null, 4));
-    log.write ('\n***********\n\n');
+    const logFinished = stream_p.finished (log);
+    // Observe write errors immediately, including before Borg's pipelines exist.
+    void logFinished.catch (() => {});
+    let pat: fs_p.FileHandle | undefined;
+    try {
+        pat = await fs_p.open (patternPath, 'w', 0o644);
+        // Make log data human readable
+        const qlog = { ... q, texecute: new Date (q.texecute ?? Date.now ()) .toLocaleString(), tschedule: new Date (q.tschedule) .toLocaleString() };
+        log.write (JSON.stringify (qlog, null, 4));
+        log.write ('\n***********\n\n');
 
-    let lastpath = '';
-    for (const e of q.list) {
-        // get all paths elements
-        let index = 0;
-        for (; index >= 0 && index < e.length-1; index = e.indexOf ('/', index+1)) {
-            if (lastpath.substring (0, index) !== e.substring (0, index)) {
-                break;      // found unwalked directory part
+        let lastpath = '';
+        for (const e of q.list) {
+            // get all paths elements
+            let index = 0;
+            for (; index >= 0 && index < e.length-1; index = e.indexOf ('/', index+1)) {
+                if (lastpath.substring (0, index) !== e.substring (0, index)) {
+                    break;      // found unwalked directory part
+                }
+            }
+            // walk remaining directory parts
+            for (; index >= 0 && index < e.length-1; index = e.indexOf ('/', index+1)) {
+                log.write           ('dir  '+e.substring (0, index)+'\n');
+                await pat.writeFile ('+pf:'+e.substring (0, index)+'\n');
+            }
+            if (index >= 0) {
+                log.write           ('dir! '+e+'\n');
+                await pat.writeFile ('+pf:'+e.substring (0, index)+'\n');
+                await pat.writeFile ('+pp:'+e+'\n');
+            } else {
+                log.write           ('file '+e+'\n');
+                await pat.writeFile ('+pf:'+e+'\n');
+            }
+            lastpath = e;
+        }
+        // don't extract ANYTHING we haven't specifically added to the pattern
+        // that includes directories (so don't recurse here)
+        await pat.writeFile ('!*\n');
+        await pat.close();
+        pat = undefined;
+
+        const entry = trees[q.backup];
+        if (!entry) throw Error ('Backup configuration is no longer available');
+        const cwd = entry.restore + '/' + q.archive;
+        log.write (`\n***********\n\nrestore path: ${cwd}\n`);
+        await fs_p.mkdir (cwd, { recursive: true });
+
+        const repo = entry.borg_repo ?? config.borg_repo;
+        if (!repo) throw Error ('No Borg repository configured');
+        const args = [ 'extract', '--list',
+                       ... entry.borg_args ?? [],
+                       '--patterns-from', '/tmp/borg-restore-'+q.handle+'.patterns',
+                        repo+'::'+q.backup+'-'+q.archive];
+        log.write ('borg '+args.join(' ')+'\n');
+        log.write ('\n***********\n\n');
+
+        const borg         = cp.spawn ('borg', args, {stdio: ['ignore', 'pipe', 'pipe'], cwd });
+        const borg_promise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }> ((resolve, reject) => {
+            borg.once ('error', reject);
+            borg.once ('close', (code, signal) => resolve ({ code, signal }));
+        });
+
+        // pipe stdout and stderr of borg to log
+        let lines = 0;
+        async function* countit (source: AsyncIterable<unknown>) {
+            for await (const chunk of source) {
+                lines++;
+                if (typeof chunk !== 'string' && !Buffer.isBuffer (chunk)) throw Error ('Unexpected Borg output');
+                yield chunk.toString () + '\n';
             }
         }
-        // walk remaining directory parts
-        for (; index >= 0 && index < e.length-1; index = e.indexOf ('/', index+1)) {
-            log.write           ('dir  '+e.substring (0, index)+'\n');
-            await pat.writeFile ('+pf:'+e.substring (0, index)+'\n');
+        const stdoutDone = stream_p.pipeline (borg.stdout, new byline.LineStream(), countit, log, { end: false });
+        const stderrDone = stream_p.pipeline (borg.stderr, new byline.LineStream(), countit, log, { end: false });
+
+        const [ { code, signal } ] = await Promise.all ( [ borg_promise, stdoutDone, stderrDone ] ).catch (async (error: unknown) => {
+            borg.kill ();
+            await Promise.allSettled ([borg_promise, stdoutDone, stderrDone]);
+            throw error;
+        });
+
+        log.write ('\n\n***********\n');
+        log.write (`Exit code ${code}, signal ${signal}, lines ${lines}\n`);
+        if (code !== 0 || signal != null) {
+            return { error: `Exit code ${code}, signal ${signal}`, lines };
         }
-        if (index >= 0) {
-            log.write           ('dir! '+e+'\n');
-            await pat.writeFile ('+pf:'+e.substring (0, index)+'\n');
-            await pat.writeFile ('+pp:'+e+'\n');
-        } else {
-            log.write           ('file '+e+'\n');
-            await pat.writeFile ('+pf:'+e+'\n');
-        }
-        lastpath = e;
-    }
-    // don't extract ANYTHING we haven't specifically added to the pattern
-    // that includes directories (so don't recurse here)
-    await pat.writeFile ('!*\n');
-    await pat.close();
-
-    const entry = trees[q.backup];
-    if (!entry) throw Error ('Backup configuration is no longer available');
-    const cwd = entry.restore + '/' + q.archive;
-    log.write (`\n***********\n\nrestore path: ${cwd}\n`);
-    await fs_p.mkdir (cwd, { recursive: true });
-
-    const repo = entry.borg_repo ?? config.borg_repo;
-    const args = [ 'extract', '--list',
-                   ... entry.borg_args ?? [],
-                   '--patterns-from', '/tmp/borg-restore-'+q.handle+'.patterns',
-                    repo+'::'+q.backup+'-'+q.archive];
-    log.write ('borg '+args.join(' ')+'\n');
-    log.write ('\n***********\n\n');
-
-    const borg         = cp.spawn ('borg', args, {stdio: ['ignore', 'pipe', 'pipe'], cwd });
-    const borg_promise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }> ((resolve, reject) => {
-        borg.once ('error', reject);
-        borg.once ('close', (code, signal) => resolve ({ code, signal }));
-    });
-
-    // pipe stdout and stderr of borg to log
-    let lines = 0;
-    async function* countit (source: AsyncIterable<unknown>) {
-        for await (const chunk of source) {
-            lines++;
-            if (typeof chunk !== 'string' && !Buffer.isBuffer (chunk)) throw Error ('Unexpected Borg output');
-            yield chunk.toString () + '\n';
+        return { lines };
+    } finally {
+        await pat?.close ();
+        log.end ();
+        try { await logFinished; }
+        finally {
+            log.destroy ();
+            await fs_p.rm (patternPath, { force: true });
         }
     }
-    const stdoutDone = stream_p.pipeline (borg.stdout, new byline.LineStream(), countit, log, { end: false });
-    const stderrDone = stream_p.pipeline (borg.stderr, new byline.LineStream(), countit, log, { end: false });
-
-    const [ { code, signal } ] = await Promise.all ( [ borg_promise, stdoutDone, stderrDone ] );
-
-    log.write ('\n\n***********\n');
-    log.write (`Exit code ${code}, signal ${signal}, lines ${lines}\n`);
-    log.end ();
-    await stream_p.finished (log);
-    log.destroy ();
-
-    await fs_p.unlink ('/tmp/borg-restore-'+q.handle+'.patterns');
-    if (code !== 0 || signal != null) {
-        return { error: `Exit code ${code}, signal ${signal}`, lines };
-    }
-    return { lines };
 }
 
 
 app.use ((error: unknown, _req: Request, res: Response, next: NextFunction) => {
     console.error (error);
     if (res.headersSent) { next (error); return; }
-    res.status (500).json ({ error: 'Request failed' });
+    const status = typeof error === 'object' && error !== null && 'status' in error &&
+        typeof error.status === 'number' && error.status >= 400 && error.status < 600 ? error.status : 500;
+    res.status (status).json ({ error: status < 500 ? 'Invalid request' : 'Request failed' });
 });
 
 config.hook_postroutes?. (app);
