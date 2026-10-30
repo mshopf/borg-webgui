@@ -1,10 +1,10 @@
 # ![Icon](public/borg.png) borg-webgui
 
-**A web-based UI for the backup system borg, currently for managing restores only**
+**A web-based UI for the backup system borg, for scheduled backups and restores**
 
-There are a number of UIs for borg available, but all of them only manage the backup side of things, not the restore side. Since backing up is typically done by administrators, restoring data is a more common (i.e. the only) end user action, thus a graphical user interface is required.
+borg-webgui combines scheduled backup administration with two restore-browsing workflows. Since backing up is typically done by administrators, restoring data is a more common (i.e. the only) end user action, thus a graphical user interface is required.
 
-borg-webgui does not allow to access data directly, but only manages file/directory selection and the restore processes. Access to restored data has to be performed by regular file system access (NFS, CIFS, ...). Therefore, borg-webgui does *NOT* handle access restrictions. That means, every user that can access the UI can see all directory and file names, their sizes, and when they have been backed up. In situations where that is not acceptable, access to the UI has to be limited to administrators only. As by restoring huge directories you can easily fill up even large file spaces, some access limitation is reasonable anyway.
+borg-webgui manages scheduled backups, file/directory selection, and restore processes. Access to restored data has to be performed by regular file system access (NFS, CIFS, ...). The UI enforces per-backup browsing, restoring and run permissions. Access to restored files remains the responsibility of the operating system, NFS or CIFS permissions. As by restoring huge directories you can easily fill up even large file spaces, some access limitation is reasonable anyway.
 
 borg-webgui does not access borg data structures itself, but uses borg for that. So borg has to be installed on the server. It uses pattern files with `pf` and `pp` directives for restoring data.
 
@@ -59,6 +59,12 @@ relative to the working directory, and static assets remain in `public/`.
 CI runs the same checks on Node.js 24. When updating dependencies, retain the
 lockfile and both TypeScript aliases so building and linting stay reproducible.
 
+
+## Scheduled backups and administration
+
+Use `npm run setup -- admin` to create the first administrator, then open **Manage backups** or **Credentials & access** from the main page. New deployments keep runtime settings in `etc/server.json` and backup definitions, credentials, schedules and access grants in `etc/management.json`. Existing `config.js` deployments remain readable and their users are imported once.
+
+See the [backup-management guide](docs/backup-management.md) for local/active and SSH pull modes, retention, exact scheduling, exclusion templates, account permissions, migration and operational details.
 
 ## Configuration
 
@@ -207,9 +213,7 @@ Bug tracking is not set up yet.
 
 ## Limitations and TODOs
 
-- At the moment, there is no handling of the backup side of borg. That may change in the future.
 - At the moment, borg backups have to be strictly named `BACKUPNAME-YYYY-MM-DD-hhmmss` (e.g. `server-2023-12-31-011505`). That may change in the future.
-- At the moment there is only trivial all-or-nothing access restriction in place. A role based authentication model and finer granular access controls are planed.
 
 
 ## Contributions

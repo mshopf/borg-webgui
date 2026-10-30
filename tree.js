@@ -5,7 +5,9 @@ const cp       = require ('child_process');
 const fs_p     = require ('node:fs').promises;
 const stream_p = require ('node:stream').promises;
 const DBuffer  = require ('./dbuffer');
-const config   = eval ('('+fs.readFileSync ('./config.js', 'utf8')+')');
+const path     = require ('node:path');
+const jsonConfig = path.resolve (process.env.BORG_WEBGUI_CONFIG_DIR ?? './etc', 'server.json');
+const config = fs.existsSync (jsonConfig) ? JSON.parse (fs.readFileSync (jsonConfig, 'utf8')) : eval ('('+fs.readFileSync ('./config.js', 'utf8')+')');
 
 // parse config data
 config._data = {};
@@ -174,8 +176,8 @@ async function read_tree (archivename, file, archive, tree, _find_tree, _add_tre
             stream = stream.pipe (bz2());
         }
     } else {
-        const repo = config._data[archivename].borg_repo ?? config.borg_repo;
-        const cmdargs = ['list', '--format', '"{type} {path} {size} {isomtime}"', '--json-lines', repo+'::'+file];
+        const repo = process.env.BORG_WEBGUI_INDEX_REPO ?? config._data[archivename]?.borg_repo ?? config.borg_repo;
+        const cmdargs = ['list', '--lock-wait', '60', '--format', '"{type} {path} {size} {isomtime}"', '--json-lines', repo+'::'+file];
         console.error ('borg ' + cmdargs.join (' '));
         const child = cp.spawn ('borg', cmdargs, { stdio: ['ignore', 'pipe', 'inherit'] });
         child_promise = new Promise ( (resolve, reject) => {
@@ -544,11 +546,11 @@ async function main () {
     // parse borg list of archives if wanted
     var obj_archives = null;
     if (files[0] && files[0][0] === '/' && files.length === 1) {
-        const repo = config._data[archivename].borg_repo ?? config.borg_repo;
+        const repo = process.env.BORG_WEBGUI_INDEX_REPO ?? config._data[archivename]?.borg_repo ?? config.borg_repo;
         const filter = new RegExp (files[0].slice(1));
         obj_archives = {};
         console.error ('reading borg archive list:  borg list --json '+repo);
-        const json = JSON.parse (await call_command ('borg', ['list', '--json', repo]));
+        const json = JSON.parse (await call_command ('borg', ['list', '--lock-wait', '60', '--json', repo]));
         for (const e of json.archives) {
             const name = e.name.match (/^((.*\/)?([^\/]*-)?(\d{4}-\d{2}-\d{2}-\d{6})(\.json)?(\.bz2)?)$/);
             if (name == null) {
