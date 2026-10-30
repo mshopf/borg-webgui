@@ -146,3 +146,25 @@ test ('log sink errors terminate a live command and Unicode outside secrets stay
     await new Promise (resolve => { redacted.once ('end', resolve); });
     assert.equal (text, '😀x');
 });
+
+test ('cancellation kills descendants even after the process-group leader exits', { timeout: 10000 }, async () => {
+    const { PassThrough } = require ('node:stream');
+    const { command } = require ('../dist/backup-process');
+    const output = new PassThrough (); const controller = new AbortController ();
+    let text = '', leader, rescued = false;
+    output.on ('data', chunk => {
+        text += chunk.toString ();
+        leader = Number (/leader:(\d+)/.exec (text)?.[1]);
+        if (text.includes ('ready') && !controller.signal.aborted) controller.abort ();
+    });
+    const rescue = setTimeout (() => {
+        rescued = true;
+        if (leader) { try { process.kill (-leader, 'SIGKILL'); } catch {} }
+    }, 7000); rescue.unref ();
+    const grandchild = 'setTimeout(()=>process.stdout.write("ready"),100);setInterval(()=>{},1000);';
+    const parent = 'process.stdout.write("leader:"+process.pid+"\\n");require("node:child_process").spawn(process.execPath,["-e",' + JSON.stringify (grandchild) + '],{stdio:["ignore",1,2]});process.exit(0);';
+    try {
+        assert.equal (await command (process.execPath, ['-e', parent], output, { signal: controller.signal }), 2);
+        assert.equal (rescued, false, 'normal cancellation must terminate the orphaned process group');
+    } finally { clearTimeout (rescue); output.destroy (); }
+});

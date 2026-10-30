@@ -30,4 +30,19 @@ cancellation, migration rejection, a failing writable sink, and Unicode redactio
 
 ## Round 2
 
-Separate review pending after the round-1 fixes.
+Three actionable findings; all addressed:
+
+1. Signal a POSIX process group even after its leader exits, so cancellation also
+   kills descendants retaining inherited output pipes.
+2. Apply per-form revisions to user/credential deletion as well as saving. This
+   completes the stale-form fix from round 1.
+3. Add main-page Cancel controls for queued/running backups visible to accounts
+   with Run permission, without requiring administrator access.
+
+Validation: TypeScript 7 checking, typed ESLint and all 29 tests pass. Added
+regressions for a process whose parent exits before cancellation, stale user and
+credential deletion, and a non-administrator cancelling from the main page.
+
+## Round 3
+
+Separate review pending after the round-2 fixes.

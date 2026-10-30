@@ -15,6 +15,7 @@ async function page (t, name) {
     dom.window.fetch = async (url, options) => {
         const body = options.body === undefined ? undefined : JSON.parse (options.body);
         requests.push ({ url, options, body });
+        if (['PUT', 'DELETE'].includes (options.method) && body.revision !== config.revision) return { ok: false, json: async () => ({ error: 'Configuration changed; reload before saving' }) };
         let value = {};
         if (url.endsWith ('/configuration')) value = config;
         else if (url.endsWith ('/runs')) value = [];
@@ -91,4 +92,36 @@ test ('refreshing lists does not advance an edited backup form revision', async 
     assert.equal (requests.filter (item => item.options.method === 'PUT').at (-1).body.revision, editingRevision);
     assert.equal (config.backups[0].name, 'Another administrator changed this');
     assert.ok (doc.getElementById ('notice').textContent.includes ('reload'));
+});
+
+for (const kind of ['user', 'credential']) test ('stale ' + kind + ' deletion keeps its editing revision', async t => {
+    const { doc, requests, config } = await page (t, 'access');
+    if (kind === 'user') config.users.push ({ id: 'reader', enabled: true, admin: false, grants: [] });
+    doc.getElementById ('refresh').click (); await settle ();
+    const root = doc.getElementById (kind + '-list');
+    const edit = kind === 'user' ? [...root.querySelectorAll ('tr')].find (row => row.textContent.includes ('reader')).querySelector ('button') : root.querySelector ('button');
+    edit.click (); const form = doc.getElementById (kind + '-form'); const editingRevision = Number (form.dataset.revision);
+    config.revision++;
+    doc.getElementById ('refresh').click (); await settle ();
+    doc.getElementById ('delete-' + kind).click (); await settle ();
+    assert.equal (requests.filter (item => item.options.method === 'DELETE').at (-1).body.revision, editingRevision);
+    assert.ok (doc.getElementById ('notice').textContent.includes ('reload'));
+});
+
+test ('main-page Run users can cancel queued or running backups without admin access', async t => {
+    const dom = new JSDOM (fs.readFileSync (require.resolve ('../public/index.html'), 'utf8'), { url: 'http://localhost/', runScripts: 'outside-only' });
+    t.after (() => dom.window.close ());
+    const requests = [];
+    dom.window.fetch = async (url, options) => {
+        requests.push ({ url, options });
+        return { ok: true, json: async () => url.includes ('/cancel') ? { cancelled: true } : { admin: false, backups: {}, state: [], scheduled: [], backupRuns: [{ id: 'run-id', backupId: 'job', state: 'running', message: 'Running' }] } };
+    };
+    dom.window.eval (fs.readFileSync (require.resolve ('../public/index.js'), 'utf8'));
+    dom.window.fetch_status (); await settle ();
+    assert.equal (dom.window.document.getElementById ('admin-nav').hidden, true);
+    const cancel = dom.window.document.querySelector ('#backup-runs button'); assert.ok (cancel);
+    cancel.click (); await settle ();
+    const request = requests.find (item => item.url === '/api/admin/runs/run-id/cancel');
+    assert.equal (request.options.method, 'POST');
+    assert.equal (request.options.headers['X-Borg-Admin'], '1');
 });

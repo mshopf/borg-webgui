@@ -198,7 +198,7 @@ async function initialize () {
                 await request ('/credentials/' + encodeURIComponent (credential.id), 'PUT', { revision: Number (credentials.dataset.revision), credential }); field (credentials, 'passphrase').value = ''; await refresh (); editCredential (configuration.credentials.find (entry => entry.id === credential.id)); message ('Credential saved.');
             }); });
             for (const [kind, form] of [['user', users], ['credential', credentials]]) document.getElementById ('delete-' + kind).addEventListener ('click', event => { void perform (event.target, async () => {
-                if (confirm ('Remove this ' + kind + '?')) { await request ('/' + kind + 's/' + encodeURIComponent (form.dataset.editing), 'DELETE', { revision: configuration.revision }); await refresh (); if (kind === 'user') editUser (); else editCredential (); message ('Removed.'); }
+                if (confirm ('Remove this ' + kind + '?')) { await request ('/' + kind + 's/' + encodeURIComponent (form.dataset.editing), 'DELETE', { revision: Number (form.dataset.revision) }); await refresh (); if (kind === 'user') editUser (); else editCredential (); message ('Removed.'); }
             }); });
         }
     } catch (error) { message (error.message, true); }

@@ -64,10 +64,10 @@ export class BackupLog {
     async close (): Promise<void> { this.stream.end (); await this.done; }
 }
 export function terminate (child: ChildProcess, signal: NodeJS.Signals = 'SIGTERM'): void {
-    if (child.exitCode !== null || child.signalCode !== null) return;
     try {
+        // The group can outlive its leader while descendants retain output pipes.
         if (process.platform !== 'win32' && child.pid) process.kill (-child.pid, signal);
-        else child.kill (signal);
+        else if (child.exitCode === null && child.signalCode === null) child.kill (signal);
     } catch (error) { if (!(error instanceof Error) || !('code' in error) || error.code !== 'ESRCH') throw error; }
 }
 export async function command (bin: string, args: string[], output: Writable, options: { env?: NodeJS.ProcessEnv; signal: AbortSignal; input?: string } ): Promise<number> {
@@ -96,7 +96,7 @@ export async function command (bin: string, args: string[], output: Writable, op
     try {
         const code = await completed;
         if (outputFailure) throw outputFailure;
-        return code;
+        return options.signal.aborted ? 2 : code;
     }
     finally {
         options.signal.removeEventListener ('abort', abort);

@@ -86,6 +86,19 @@ function update_scheduled (backups, runs) {
         const row = document.createElement ('p');
         row.textContent = run.backupId + ': ' + run.state + ' — ' + run.message + ' ';
         const link = document.createElement ('a'); link.textContent = 'Log'; link.href = '/api/admin/runs/' + encodeURIComponent (run.id) + '/log'; row.appendChild (link); log.appendChild (row);
+        if (['queued', 'running'].includes (run.state)) {
+            const cancel = document.createElement ('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
+            cancel.addEventListener ('click', async () => {
+                cancel.disabled = true;
+                try {
+                    const response = await fetch ('/api/admin/runs/' + encodeURIComponent (run.id) + '/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Borg-Admin': '1' }, body: '{}' });
+                    const result = await response.json ();
+                    if (!response.ok) throw Error (result.error);
+                    fetch_status ();
+                } catch (error) { alert (error.message); }
+                finally { cancel.disabled = false; }
+            }); row.appendChild (cancel);
+        }
     }
     if (!runs.length) log.textContent = 'No backup runs yet.';
 }
