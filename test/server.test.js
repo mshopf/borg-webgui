@@ -25,11 +25,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
 const pattern = args[args.indexOf('--patterns-from') + 1];
-fs.writeFileSync(path.basename(pattern) + '.json', JSON.stringify({args, patterns: fs.readFileSync(pattern, 'utf8')}));
+fs.writeFileSync(path.basename(pattern) + '.json', JSON.stringify({args, patterns: fs.readFileSync(pattern, 'utf8'), passphraseDigest: require('node:crypto').createHash('sha256').update(process.env.BORG_PASSPHRASE || '').digest('hex')}));
 process.stdout.write('restored entry\\n');
 process.stderr.write('diagnostic entry\\n');
 const marker = path.join(process.env.BORG_TEST_ROOT, 'fail-next');
 if (fs.existsSync(marker)) { fs.unlinkSync(marker); process.exitCode = 2; }
+const hold = path.join(process.env.BORG_TEST_ROOT, 'hold-restores');
+if (fs.existsSync(hold)) {
+  fs.writeFileSync(path.join(process.env.BORG_TEST_ROOT, 'restore-blocked'), '');
+  const timer = setInterval(() => { if (!fs.existsSync(hold)) clearInterval(timer); }, 10);
+}
 `;
     await fs.writeFile (path.join (dir, 'bin/borg'), fakeBorg, { mode: 0o755 });
     const child = spawn (process.execPath, [path.resolve (__dirname, '../server.js')], { cwd: dir, env: { ...process.env, PATH: path.join (dir, 'bin') + path.delimiter + process.env.PATH, BORG_TEST_ROOT: dir }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -152,5 +157,36 @@ if (fs.existsSync(marker)) { fs.unlinkSync(marker); process.exitCode = 2; }
     assert.equal ((await putManaged (managedBackup)).status, 200);
     assert.equal ((await request ('/api/data/constructor/')).status, 404);
     assert.equal (Object.hasOwn ((await (await fetch (url + '/api/status', { headers })).json ()).backups, 'constructor'), false);
+
+    // Queued restores retain their original repository, destination and credentials.
+    await fs.rename (path.join (dir, 'bin/borg-disabled'), path.join (dir, 'bin/borg'));
+    const adminWrite = (route, body) => fetch (url + '/api/admin' + route, { method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json', 'X-Borg-Admin': '1' }, body: JSON.stringify (body) });
+    let snapshotConfig = await (await request ('/api/admin/configuration')).json ();
+    assert.equal ((await adminWrite ('/credentials/snapshot', { revision: snapshotConfig.revision, credential: { id: 'snapshot', name: 'Snapshot', passphrase: 'snapshot-secret-A' } })).status, 200);
+    snapshotConfig = await (await request ('/api/admin/configuration')).json ();
+    const snapshotBackup = { ...snapshotConfig.backups[0], repository: './repo-a', restoreDirectory: './snapshots-a', credentialId: 'snapshot' };
+    assert.equal ((await adminWrite ('/backups/constructor', { revision: snapshotConfig.revision, backup: snapshotBackup })).status, 200);
+    await fs.writeFile (path.join (dir, 'hold-restores'), '');
+    const blocked = new Promise (resolve => {
+        const watcher = require ('node:fs').watch (dir, (_event, filename) => { if (filename === 'restore-blocked') { watcher.close (); resolve (); } });
+    });
+    const blocker = await (await post ({ archive: '2024-01-01-120000', list: ['dir/file'] })).json ();
+    await blocked;
+    const queued = await (await fetch (url + '/api/restore/constructor', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify ({ archive: '2024-01-01-120000', list: ['dir/file'] }) })).json ();
+    const queuedStatus = await (await fetch (url + '/api/status', { headers })).json ();
+    assert.equal (queuedStatus.state.find (item => item.handle === queued).state, 'wait');
+    snapshotConfig = await (await request ('/api/admin/configuration')).json ();
+    assert.equal ((await adminWrite ('/credentials/snapshot', { revision: snapshotConfig.revision, credential: { id: 'snapshot', name: 'Snapshot', passphrase: 'snapshot-secret-B' } })).status, 200);
+    snapshotConfig = await (await request ('/api/admin/configuration')).json ();
+    assert.equal ((await adminWrite ('/backups/constructor', { revision: snapshotConfig.revision, backup: { ...snapshotBackup, repository: './repo-b', restoreDirectory: './snapshots-b' } })).status, 200);
+    await fs.rm (path.join (dir, 'hold-restores'));
+    await waitForOutput ('Finished restore process ' + blocker);
+    await waitForOutput ('Finished restore process ' + queued);
+    const queuedInvocation = JSON.parse (await fs.readFile (path.join (dir, 'snapshots-a/constructor/2024-01-01-120000/borg-restore-' + queued + '.patterns.json'), 'utf8'));
+    assert.equal (queuedInvocation.args.at (-1), path.join (dir, 'repo-a') + '::constructor-2024-01-01-120000');
+    assert.equal (queuedInvocation.passphraseDigest, require ('node:crypto').createHash ('sha256').update ('snapshot-secret-A').digest ('hex'));
+    const queuedLog = await fs.readFile (path.join (dir, 'log/' + queued + '.log'), 'utf8');
+    assert.equal (queuedLog.includes ('snapshot-secret-A'), false);
+    assert.equal (queuedLog.includes ('snapshot-secret-B'), false);
 
 });

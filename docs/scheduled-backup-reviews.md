@@ -45,4 +45,22 @@ credential deletion, and a non-administrator cancelling from the main page.
 
 ## Round 3
 
-Separate review pending after the round-2 fixes.
+Two actionable findings; both addressed:
+
+1. Snapshot repository, restore directory, Borg arguments and credential environment
+   when accepting a restore. Keep the snapshot in a private WeakMap so secrets
+   never enter the serialized queue/log object. Editing a definition while a
+   restore waits cannot redirect that accepted request to another repository.
+2. Prefix automatically generated exclusion paths with Borg's literal pp: matcher;
+   preserve user-specified/template glob patterns unchanged.
+
+Restores and index-list commands also use the same 60-second lock wait as backup
+commands. Validation: all 30 tests, typed ESLint and TypeScript checking pass. The
+HTTP regression blocks one restore, queues another, changes its repository,
+destination and credential, and verifies extraction still uses the original
+context without credentials appearing in its log. Literal bracket-containing
+repository/restore exclusions have dedicated coverage.
+
+## Round 4
+
+Separate review pending after the round-3 fixes.

@@ -21,6 +21,7 @@ import { createBackupExecutor, treeFile } from './backup-engine';
 import { credentialEnvironment } from './backup-process';
 import { allowed } from './management-schema';
 import { indexMatchesRepository } from './backup-index';
+import { normalizeRepository } from './backup-repository';
 import type { BackupDefinition } from './management-schema';
 import { ZodError } from 'zod';
 import type { DataConfig, TreeEntry, StatusEntry, RestoreInput, RestoreJob } from './types';
@@ -37,6 +38,7 @@ async function main (): Promise<void> {
 const app      = express ();
 const trees = Object.create (null) as Record<string, TreeEntry>;
 const queue: (StatusEntry | RestoreJob)[] = [];
+const restoreContexts = new WeakMap<RestoreJob, { repository?: string; directory: string; args: string[]; env: NodeJS.ProcessEnv }> ();
 let queue_active = 0;
 
 let config = readConfig ();
@@ -304,7 +306,7 @@ app.post<{ backup: string }, unknown, unknown> ('/api/restore/:backup', function
 
     for (const e of entry.archives) {
         if (e === ar) {
-            const handle = queue_request ({ backup: req.params.backup, archive: ar, list, short: (list[0] ?? '').substring(0,20)+'...' });
+            const handle = queue_request ({ backup: req.params.backup, archive: ar, list, short: (list[0] ?? '').substring(0,20)+'...' }, entry);
             return res .json (handle);
         }
     }
@@ -312,9 +314,14 @@ app.post<{ backup: string }, unknown, unknown> ('/api/restore/:backup', function
     return res .status (404) .send (null);
 });
 
-function queue_request (input: RestoreInput): string {
+function queue_request (input: RestoreInput, entry: TreeEntry): string {
     const obj: RestoreJob = { ...input, handle: crypto.randomBytes (4).toString ('hex'),
         tschedule: Date.now (), texecute: null, tfinish: null, state: 'wait', info: 'queued' };
+    const repository = entry.borg_repo ?? config.borg_repo;
+    const credential = store.snapshot ().credentials.find (item => item.id === entry.credentialId);
+    // Keep credential/environment snapshots out of the job that status/log JSON serializes.
+    restoreContexts.set (obj, { repository: repository ? normalizeRepository (repository) : undefined,
+        directory: path.resolve (entry.restore), args: [...entry.borg_args ?? []], env: credentialEnvironment (credential) });
     queue.push (obj);
     queue_active++;
     if (queue_active === 1) background (run_queue ());
@@ -331,6 +338,7 @@ async function run_queue () {
                 q.texecute = Date.now();
 
                 const result = await execute_borg_extract (q).catch ((error: unknown) => ({ error: String (error), lines: 0 }));
+                restoreContexts.delete (q);
 
                 if (result.error !== undefined) {
                     q.state = 'err';
@@ -397,23 +405,22 @@ async function execute_borg_extract (q: RestoreJob): Promise<{ error?: string; l
         await pat.close();
         pat = undefined;
 
-        const entry = trees[q.backup];
-        if (!entry) throw Error ('Backup configuration is no longer available');
-        const cwd = entry.restore + '/' + q.archive;
+        const context = restoreContexts.get (q);
+        if (!context) throw Error ('Restore context is missing');
+        const cwd = context.directory + '/' + q.archive;
         log.write (`\n***********\n\nrestore path: ${cwd}\n`);
         await fs_p.mkdir (cwd, { recursive: true });
 
-        const repo = entry.borg_repo ?? config.borg_repo;
+        const repo = context.repository;
         if (!repo) throw Error ('No Borg repository configured');
-        const args = [ 'extract', '--list',
-                       ... entry.borg_args ?? [],
+        const args = [ 'extract', '--list', '--lock-wait', '60',
+                       ... context.args,
                        '--patterns-from', '/tmp/borg-restore-'+q.handle+'.patterns',
                         repo+'::'+q.backup+'-'+q.archive];
         log.write ('borg '+args.join(' ')+'\n');
         log.write ('\n***********\n\n');
 
-        const credential = store.snapshot ().credentials.find (item => item.id === entry.credentialId);
-        const borg         = cp.spawn ('borg', args, {stdio: ['ignore', 'pipe', 'pipe'], cwd, env: credentialEnvironment (credential) });
+        const borg         = cp.spawn ('borg', args, {stdio: ['ignore', 'pipe', 'pipe'], cwd, env: context.env });
         const borg_promise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }> ((resolve, reject) => {
             borg.once ('error', reject);
             borg.once ('close', (code, signal) => resolve ({ code, signal }));

@@ -16,8 +16,8 @@ export function effectiveExclusions (backup: BackupDefinition): string[] {
     for (const id of backup.templates) {
         const template = exclusionTemplates.find (item => item.id === id);
         if (template) patterns.push (...template.patterns);
-        if (id === 'webgui') patterns.push (path.resolve ('log'), path.resolve ('data/managed'), path.resolve (backup.restoreDirectory));
+        if (id === 'webgui') patterns.push (...[path.resolve ('log'), path.resolve ('data/managed'), path.resolve (backup.restoreDirectory)].map (directory => 'pp:' + directory));
     }
-    if (backup.mode === 'local' && path.isAbsolute (backup.repository)) patterns.push (backup.repository);
+    if (backup.mode === 'local' && path.isAbsolute (backup.repository)) patterns.push ('pp:' + backup.repository);
     return [...new Set (patterns)];
 }

@@ -151,7 +151,9 @@ are skipped. Slots missed while the server is down, or while the same definition
 is still running past that slot's minute, are skipped. There is no automatic
 catch-up burst or automatic retry; use Run now after inspecting a failure.
 
-A run snapshots its definition and credential when queued. Another run of the
+A backup run snapshots its definition and credential when queued. Restore requests
+also snapshot their repository, destination, arguments and credential environment
+when accepted, so later edits cannot redirect queued restores. Another run of the
 same definition is rejected until the queued/running operation finishes or is
 cancelled. Different backups queue behind each other. The per-backup timeout
 starts when execution begins. On restart, formerly queued/running entries become
@@ -199,7 +201,9 @@ application caches, trash/recycle bins, optional development dependencies, and t
 service's own backup/restore outputs. The original supplied base and replacement
 exclude lists are also available as optional templates, including their
 site-specific paths. **Preview combined exclusions** shows the final patterns.
-A local repository path is always excluded from a local source backup to prevent
+Automatic output/repository exclusions use literal Borg path prefixes; user
+patterns retain their normal matching semantics. A local repository path is
+always excluded from a local source backup to prevent
 backing a repository up into itself. Templates are not exhaustive: databases,
 virtual machines and application state may need their own quiescing/snapshot
 workflow. Development dependencies are not excluded by default.

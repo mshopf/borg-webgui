@@ -23,7 +23,7 @@ test ('backup schema defaults mirror scripts and reject unsafe definitions', () 
         { retention: { daily: 0, weekly: 0, monthly: 0, yearly: 0 } }]) assert.throws (() => definition (extra));
     assert.throws (() => managementSchema.parse ({ version: 1, users: [], credentials: [], backups: [backup, definition ({ id: 'host-root-extra' })] }));
     const patterns = effectiveExclusions (backup);
-    assert.ok (patterns.includes ('/backup/repo'));
+    assert.ok (patterns.includes ('pp:/backup/repo'));
     assert.ok (patterns.includes ('/proc/*'));
     assert.equal (patterns.includes ('*/node_modules'), false);
 });
@@ -100,4 +100,13 @@ test ('service serializes work, rejects overlapping runs and can cancel queued w
     assert.deepEqual (calls, ['host-root']);
     assert.equal (service.runs ().find (run => run.id === first.id).state, 'warning');
     assert.equal (service.runs ().find (run => run.id === second.id).state, 'cancelled');
+});
+
+test ('automatic exclusions use literal Borg path prefixes while user patterns stay patterns', () => {
+    const backup = definition ({ repository: '/srv/repo[12]', restoreDirectory: '/srv/restores[12]', exclusions: ['*.cache'] });
+    const patterns = effectiveExclusions (backup);
+    assert.ok (patterns.includes ('pp:/srv/repo[12]'));
+    assert.ok (patterns.includes ('pp:/srv/restores[12]'));
+    assert.equal (patterns.includes ('/srv/repo[12]'), false);
+    assert.ok (patterns.includes ('*.cache'));
 });
