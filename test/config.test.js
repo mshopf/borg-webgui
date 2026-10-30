@@ -32,3 +32,19 @@ test ('invalid configuration is rejected at its untyped boundary', () => {
         assert.throws (() => parse (value));
     }
 });
+
+test ('setup migration rejects malformed legacy settings instead of writing defaults', async t => {
+    const fsPromises = require ('node:fs/promises');
+    const os = require ('node:os'); const path = require ('node:path');
+    const { initializeJsonSettings } = require ('../dist/config');
+    const dir = await fsPromises.mkdtemp (path.join (os.tmpdir (), 'borg-setup-'));
+    const previous = process.cwd (); process.chdir (dir);
+    t.after (async () => { process.chdir (previous); await fsPromises.rm (dir, { recursive: true, force: true }); });
+    const configDir = path.join (dir, 'etc'); await fsPromises.mkdir (configDir);
+    await fsPromises.writeFile ('config.js', 'invalid javascript (');
+    await assert.rejects (initializeJsonSettings (configDir));
+    await assert.rejects (fsPromises.access (path.join (configDir, 'server.json')));
+    await fsPromises.rm ('config.js');
+    await initializeJsonSettings (configDir);
+    assert.equal (JSON.parse (await fsPromises.readFile (path.join (configDir, 'server.json'), 'utf8')).httpPort, 8080);
+});

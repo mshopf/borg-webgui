@@ -41,6 +41,9 @@ export class RedactingStream extends Transform {
                 match = this.carry.indexOf (this.secret);
             }
         }
+        if (safe > 0 && safe < this.carry.length &&
+            this.carry.charCodeAt (safe - 1) >= 0xd800 && this.carry.charCodeAt (safe - 1) <= 0xdbff &&
+            this.carry.charCodeAt (safe) >= 0xdc00 && this.carry.charCodeAt (safe) <= 0xdfff) safe--;
         this.push (this.carry.slice (0, safe)); this.carry = this.carry.slice (safe);
     }
 }
@@ -69,12 +72,17 @@ export function terminate (child: ChildProcess, signal: NodeJS.Signals = 'SIGTER
 }
 export async function command (bin: string, args: string[], output: Writable, options: { env?: NodeJS.ProcessEnv; signal: AbortSignal; input?: string } ): Promise<number> {
     options.signal.throwIfAborted ();
+    if (output.destroyed) throw output.errored ?? Error ('Backup log is closed');
     const child = spawn (bin, args, { env: options.env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
     let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let outputFailure: Error | undefined;
     const abort = () => {
         terminate (child);
+        if (killTimer) return;
         killTimer = setTimeout (() => { terminate (child, 'SIGKILL'); }, 5000); killTimer.unref ();
     };
+    const failedOutput = (error: Error) => { outputFailure = error; abort (); };
+    output.once ('error', failedOutput);
     options.signal.addEventListener ('abort', abort, { once: true });
     if (options.signal.aborted) abort ();
     const completed = new Promise<number> ((resolve, reject) => {
@@ -85,9 +93,14 @@ export async function command (bin: string, args: string[], output: Writable, op
     // EPIPE means the remote command exited before consuming its script.
     child.stdin.on ('error', error => { if (!('code' in error) || error.code !== 'EPIPE') terminate (child); });
     child.stdin.end (options.input);
-    try { return await completed; }
+    try {
+        const code = await completed;
+        if (outputFailure) throw outputFailure;
+        return code;
+    }
     finally {
         options.signal.removeEventListener ('abort', abort);
+        output.removeListener ('error', failedOutput);
         if (killTimer) clearTimeout (killTimer);
         child.stdout.unpipe (output); child.stderr.unpipe (output);
     }

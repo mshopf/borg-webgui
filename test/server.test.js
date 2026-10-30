@@ -7,7 +7,7 @@ const { spawn, spawnSync } = require ('node:child_process');
 const { once } = require ('node:events');
 const argon2 = require ('argon2');
 
-test ('authenticated API serves snapshots, union trees and rejects invalid queries', { timeout: 15000 }, async t => {
+test ('authenticated API serves snapshots, union trees and rejects invalid queries', { timeout: 30000 }, async t => {
     const dir = await fs.mkdtemp (path.join (os.tmpdir (), 'borg-server-'));
     t.after (() => fs.rm (dir, { recursive: true, force: true }));
     const config = { httpPort: 0, borg_repo: '/test/repository', data: [{ file: 'api-data-tree.bin', restore: 'restore', enable: true }],
@@ -132,5 +132,25 @@ if (fs.existsSync(marker)) { fs.unlinkSync(marker); process.exitCode = 2; }
     const readerStatus = await (await fetch (url + '/api/status', { headers: readerHeaders })).json ();
     assert.equal (readerStatus.state.length, 0);
     assert.equal ((await fetch (url + '/log/' + succeeded + '.log', { headers: readerHeaders })).status, 403);
+
+    // Prototype-shaped IDs are legitimate, and repository changes must hide an old index.
+    const managedDirectory = path.join (dir, 'data/managed');
+    await fs.mkdir (managedDirectory, { recursive: true });
+    const managedFile = path.join (managedDirectory, 'constructor-data-tree.bin');
+    const managedBuild = spawnSync (process.execPath, [path.resolve (__dirname, '../tree.js'), '-c', '-m', managedFile, '+' + filename], { cwd: dir, encoding: 'utf8' });
+    assert.equal (managedBuild.status, 0, managedBuild.stderr);
+    const { repositoryIdentity } = require ('../dist/backup-repository');
+    await fs.writeFile (managedFile + '.repository.json', JSON.stringify ({ version: 1, repository: repositoryIdentity (path.join (dir, 'repo-a')) }));
+    let managedConfig = await (await request ('/api/admin/configuration')).json ();
+    let managedBackup = { id: 'constructor', name: 'Prototype name', mode: 'local', repository: './repo-a', sources: ['/source'], index: true };
+    const putManaged = backup => fetch (url + '/api/admin/backups/constructor', { method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json', 'X-Borg-Admin': '1' }, body: JSON.stringify ({ revision: managedConfig.revision, backup }) });
+    assert.equal ((await putManaged (managedBackup)).status, 200);
+    assert.equal ((await (await fetch (url + '/api/status', { headers })).json ()).backups.constructor, 1);
+    assert.equal ((await request ('/api/data/constructor/')).status, 200);
+    managedConfig = await (await request ('/api/admin/configuration')).json ();
+    managedBackup = { ...managedConfig.backups[0], repository: './repo-b' };
+    assert.equal ((await putManaged (managedBackup)).status, 200);
+    assert.equal ((await request ('/api/data/constructor/')).status, 404);
+    assert.equal (Object.hasOwn ((await (await fetch (url + '/api/status', { headers })).json ()).backups, 'constructor'), false);
 
 });

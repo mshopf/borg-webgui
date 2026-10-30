@@ -20,6 +20,7 @@ async function page (t, name) {
         else if (url.endsWith ('/runs')) value = [];
         else if (url.endsWith ('/preview-exclusions')) value = ['template-pattern', ...body.exclusions];
         else if (options.method === 'PUT') {
+            if (body.revision !== config.revision) return { ok: false, json: async () => ({ error: 'Configuration changed; reload before saving' }) };
             if (body.backup) { config.backups = [backupSchema.parse (body.backup)]; config.nextRuns[body.backup.id] = '2026-10-31T02:00:00Z'; }
             if (body.user) config.users.push ({ ...body.user, password: undefined });
             if (body.credential) config.credentials = [{ ...body.credential, passphrase: undefined, hasPassphrase: true }];
@@ -29,7 +30,7 @@ async function page (t, name) {
     };
     dom.window.eval (script); await settle ();
     assert.equal (dom.window.document.getElementById ('admin-content').hidden, false);
-    return { window: dom.window, doc: dom.window.document, requests };
+    return { window: dom.window, doc: dom.window.document, requests, config };
 }
 
 test ('backup admin edits schedules/exclusions and saves local or pull configurations', async t => {
@@ -75,4 +76,19 @@ test ('access admin saves user grants and write-only credentials', async t => {
     assert.equal (credentials.elements.namedItem ('passphrase').value, '');
     assert.ok (requests.every (item => item.options.headers['X-Borg-Admin'] === '1'));
     assert.equal (doc.body.textContent.includes ('repository-secret'), false);
+});
+
+test ('refreshing lists does not advance an edited backup form revision', async t => {
+    const { window, doc, requests, config } = await page (t, 'backups');
+    const form = doc.getElementById ('backup-form');
+    for (const [name, value] of Object.entries ({ id: 'job', name: 'Original', repository: '/repo', sources: '/home' })) form.elements.namedItem (name).value = value;
+    form.dispatchEvent (new window.Event ('submit', { cancelable: true })); await settle ();
+    const editingRevision = Number (form.dataset.revision);
+    config.revision++; config.backups[0].name = 'Another administrator changed this';
+    doc.getElementById ('refresh').click (); await settle ();
+    form.elements.namedItem ('name').value = 'Stale draft';
+    form.dispatchEvent (new window.Event ('submit', { cancelable: true })); await settle ();
+    assert.equal (requests.filter (item => item.options.method === 'PUT').at (-1).body.revision, editingRevision);
+    assert.equal (config.backups[0].name, 'Another administrator changed this');
+    assert.ok (doc.getElementById ('notice').textContent.includes ('reload'));
 });

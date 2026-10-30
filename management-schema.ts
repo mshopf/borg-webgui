@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { normalizeRepository } from './backup-repository';
 
 export const idSchema = z.string ().regex (/^[a-zA-Z0-9][a-zA-Z0-9._%-]{0,63}$/);
 const line = z.string ().min (1).max (4096).refine (value => [...value].every (char => char.charCodeAt (0) >= 32 && char.charCodeAt (0) !== 127), 'Control characters are not allowed');
@@ -18,7 +19,7 @@ const common = {
     id: idSchema,
     name: line.max (120),
     enabled: z.boolean ().default (false),
-    repository: line.refine (value => !value.startsWith ('-') && !value.includes ('::'), 'Invalid repository'),
+    repository: line.refine (value => !value.startsWith ('-') && !value.includes ('::'), 'Invalid repository').transform (normalizeRepository),
     sources: z.array (absolutePath).min (1).max (100),
     credentialId: idSchema.optional (),
     schedule: scheduleSchema.default (() => scheduleSchema.parse ({})),

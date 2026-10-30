@@ -35,11 +35,11 @@ export function managementRouter (store: ManagementStore, service: BackupService
         z.strictObject ({}).parse (req.body);
         return res.status (202).json (await service.enqueue (id));
     }));
-    router.post ('/runs/:id/cancel', route ((req, res) => {
+    router.post ('/runs/:id/cancel', route (async (req, res) => {
         const run = service.runs ().find (item => item.id === req.params.id);
         if (!run) return res.status (404).json ({ error: 'Unknown run' });
         access.require (req, run.backupId, 'run'); z.strictObject ({}).parse (req.body);
-        service.cancel (run.id); return res.json ({ cancelled: true });
+        await service.cancel (run.id); return res.json ({ cancelled: true });
     }));
     router.get ('/runs/:id/log', (req, res) => {
         const run = service.runs ().find (item => item.id === req.params.id);

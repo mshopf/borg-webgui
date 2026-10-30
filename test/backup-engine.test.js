@@ -25,7 +25,7 @@ const root = process.env.TEST_ENGINE_ROOT;
 const args = process.argv.slice(2), op = args[0];
 fs.appendFileSync(root + '/commands.jsonl', JSON.stringify({args}) + '\\n');
 if (op === 'serve') { process.stdin.pipe(process.stdout); }
-else if (op === 'list' && args.includes('--json-lines')) console.log(JSON.stringify({type:'-',path:'dir/file',size:7,isomtime:'2026-10-30T00:00:00'}));
+else if (op === 'list' && args.includes('--json-lines')) console.log(JSON.stringify({type:'-',path:process.env.TEST_LIST_PATH || 'dir/file',size:7,isomtime:'2026-10-30T00:00:00'}));
 else if (op === 'list') console.log(JSON.stringify({archives:[{name:'source-2026-10-30-030000'}]}));
 else {
   console.log('Borg ' + op + ' ' + (process.env.BORG_PASSPHRASE || ''));
@@ -120,4 +120,29 @@ test ('successful backups refresh the binary restore index through the real CLI'
         const listing = await browseArchive ({ db, offset }, 'dir', 1);
         assert.equal (listing.c.file.s, 7);
     } finally { await db.close (); }
+    const { indexMatchesRepository } = require ('../dist/backup-index');
+    const changed = backup ({ index: true, repository: './different-repo' });
+    assert.equal (changed.repository, path.resolve ('different-repo'));
+    assert.equal (await indexMatchesRepository (changed), false);
+    process.env.TEST_LIST_PATH = 'newdir/newfile';
+    assert.equal (await createBackupExecutor () (changed, undefined, run (), new AbortController ().signal), 0);
+    assert.equal (await indexMatchesRepository (changed), true);
+    const rebuilt = new DBuffer (await fs.open ('data/managed/source-data-tree.bin', 'r'));
+    try {
+        const offset = await rebuilt.read_header ();
+        assert.equal (await browseArchive ({ db: rebuilt, offset }, 'dir', 1), null);
+        assert.equal ((await browseArchive ({ db: rebuilt, offset }, 'newdir', 1)).c.newfile.s, 7);
+    } finally { await rebuilt.close (); }
+});
+
+test ('log sink errors terminate a live command and Unicode outside secrets stays intact', { timeout: 10000 }, async () => {
+    const { Writable } = require ('node:stream');
+    const { command } = require ('../dist/backup-process');
+    const output = new Writable ({ write (_chunk, _encoding, callback) { callback (Error ('disk full')); } });
+    await assert.rejects (command (process.execPath, ['-e', 'process.stdout.write("ready");setInterval(()=>process.stdout.write("more"),100);'], output, { signal: new AbortController ().signal }), /disk full/);
+    const redacted = new RedactingStream ('abc'); let text = '';
+    redacted.on ('data', chunk => { text += chunk.toString (); });
+    redacted.write ('😀'); redacted.write ('x'); redacted.end ();
+    await new Promise (resolve => { redacted.once ('end', resolve); });
+    assert.equal (text, '😀x');
 });

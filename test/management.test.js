@@ -93,6 +93,8 @@ test ('service serializes work, rejects overlapping runs and can cancel queued w
     await assert.rejects (service.enqueue ('host-root'), /already/);
     const second = await service.enqueue ('other');
     await service.cancel (second.id);
+    assert.equal (service.runs ().find (run => run.id === second.id).state, 'cancelled');
+    assert.equal (service.busy ('other'), false);
     release ();
     await service.idle ();
     assert.deepEqual (calls, ['host-root']);

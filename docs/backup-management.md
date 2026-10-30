@@ -158,6 +158,12 @@ starts when execution begins. On restart, formerly queued/running entries become
 `interrupted`; inspect the repository before retrying. The service does not break
 Borg locks or assume that an interrupted archive is complete.
 
+An index is bound to its repository identity. Changing a repository hides its old
+index immediately, and the next backup rebuilds it from scratch. Reusing a removed
+ID with a different repository likewise cannot expose its former index. Relative
+filesystem repositories are anchored to the server working directory, including
+during extraction.
+
 Removing a definition never deletes repository archives, restored data or its
 existing index file. It removes the managed restore listing and its specific
 user grants. Removing a credential in use is rejected. The final enabled

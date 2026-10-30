@@ -35,6 +35,7 @@ function table (root, headers) {
 async function refresh () {
     configuration = await request ('/configuration');
     document.getElementById ('admin-content').hidden = false;
+    for (const form of document.forms) if (!form.dataset.editing && field (form, 'id')?.value === '') form.dataset.revision = configuration.revision;
     if (page === 'backups') { renderBackups (); renderBackupOptions (); await renderRuns (); }
     else { renderUsers (); renderCredentials (); }
 }
@@ -72,7 +73,7 @@ function modeFields () {
     document.getElementById ('monthdays-label').hidden = field (form, 'frequency').value !== 'monthly';
 }
 function editBackup (backup) {
-    const form = document.getElementById ('backup-form'); form.reset (); form.dataset.editing = backup?.id ?? '';
+    const form = document.getElementById ('backup-form'); form.reset (); form.dataset.editing = backup?.id ?? ''; form.dataset.revision = configuration.revision;
     field (form, 'id').readOnly = Boolean (backup); document.getElementById ('delete-backup').hidden = !backup;
     document.getElementById ('editor-title').textContent = backup ? 'Edit ' + backup.name : 'Add backup';
     field (form, 'timezone').value = configuration.serverTimezone;
@@ -127,7 +128,7 @@ function renderUsers () {
     }
 }
 function editUser (user) {
-    const form = document.getElementById ('user-form'); form.reset (); form.dataset.editing = user?.id ?? '';
+    const form = document.getElementById ('user-form'); form.reset (); form.dataset.editing = user?.id ?? ''; form.dataset.revision = configuration.revision;
     field (form, 'id').value = user?.id ?? ''; field (form, 'id').readOnly = Boolean (user); field (form, 'password').required = !user;
     field (form, 'admin').checked = user?.admin ?? false; field (form, 'enabled').checked = user?.enabled ?? true;
     document.getElementById ('user-title').textContent = user ? 'Edit ' + user.id : 'Add user'; document.getElementById ('delete-user').hidden = !user;
@@ -153,7 +154,7 @@ function renderCredentials () {
     }
 }
 function editCredential (credential) {
-    const form = document.getElementById ('credential-form'); form.reset (); form.dataset.editing = credential?.id ?? '';
+    const form = document.getElementById ('credential-form'); form.reset (); form.dataset.editing = credential?.id ?? ''; form.dataset.revision = configuration.revision;
     for (const name of ['id', 'name', 'sshIdentityFile']) field (form, name).value = credential?.[name] ?? '';
     field (form, 'id').readOnly = Boolean (credential); document.getElementById ('delete-credential').hidden = !credential;
     document.getElementById ('credential-title').textContent = credential ? 'Edit ' + credential.name : 'Add credential';
@@ -174,10 +175,10 @@ async function initialize () {
             document.getElementById ('new-backup').addEventListener ('click', () => { editBackup (); });
             document.getElementById ('cancel-edit').addEventListener ('click', () => { editBackup (); });
             form.addEventListener ('submit', event => { event.preventDefault (); void perform (form.querySelector ('button[type=submit]'), async () => {
-                const backup = backupFormValue (); await request ('/backups/' + encodeURIComponent (backup.id), 'PUT', { revision: configuration.revision, backup }); await refresh (); editBackup (configuration.backups.find (entry => entry.id === backup.id)); message ('Backup saved.');
+                const backup = backupFormValue (); await request ('/backups/' + encodeURIComponent (backup.id), 'PUT', { revision: Number (form.dataset.revision), backup }); await refresh (); editBackup (configuration.backups.find (entry => entry.id === backup.id)); message ('Backup saved.');
             }); });
             document.getElementById ('delete-backup').addEventListener ('click', event => { void perform (event.target, async () => {
-                if (confirm ('Remove this definition? Repository archives and restored files will be kept.')) { await request ('/backups/' + encodeURIComponent (form.dataset.editing), 'DELETE', { revision: configuration.revision }); await refresh (); editBackup (); message ('Definition removed.'); }
+                if (confirm ('Remove this definition? Repository archives and restored files will be kept.')) { await request ('/backups/' + encodeURIComponent (form.dataset.editing), 'DELETE', { revision: Number (form.dataset.revision) }); await refresh (); editBackup (); message ('Definition removed.'); }
             }); });
             document.getElementById ('preview-exclusions').addEventListener ('click', event => { void perform (event.target, async () => {
                 const patterns = await request ('/preview-exclusions', 'POST', backupFormValue ()); document.getElementById ('exclusion-preview').value = patterns.join ('\n'); document.getElementById ('exclusion-preview-label').hidden = false;
@@ -190,11 +191,11 @@ async function initialize () {
             users.addEventListener ('submit', event => { event.preventDefault (); void perform (users.querySelector ('button[type=submit]'), async () => {
                 const grants = [...document.querySelectorAll ('.grant')].map (row => ({ backup: row.dataset.backup, ...Object.fromEntries ([...row.querySelectorAll ('input')].map (input => [input.dataset.right, input.checked])) })).filter (grant => grant.browse || grant.restore || grant.run);
                 const user = { id: field (users, 'id').value, password: field (users, 'password').value || undefined, admin: field (users, 'admin').checked, enabled: field (users, 'enabled').checked, grants };
-                await request ('/users/' + encodeURIComponent (user.id), 'PUT', { revision: configuration.revision, user }); field (users, 'password').value = ''; await refresh (); editUser (configuration.users.find (entry => entry.id === user.id)); message ('User saved.');
+                await request ('/users/' + encodeURIComponent (user.id), 'PUT', { revision: Number (users.dataset.revision), user }); field (users, 'password').value = ''; await refresh (); editUser (configuration.users.find (entry => entry.id === user.id)); message ('User saved.');
             }); });
             credentials.addEventListener ('submit', event => { event.preventDefault (); void perform (credentials.querySelector ('button[type=submit]'), async () => {
                 const credential = { id: field (credentials, 'id').value, name: field (credentials, 'name').value, passphrase: field (credentials, 'passphrase').value || undefined, clearPassphrase: field (credentials, 'clearPassphrase').checked, sshIdentityFile: field (credentials, 'sshIdentityFile').value || undefined };
-                await request ('/credentials/' + encodeURIComponent (credential.id), 'PUT', { revision: configuration.revision, credential }); field (credentials, 'passphrase').value = ''; await refresh (); editCredential (configuration.credentials.find (entry => entry.id === credential.id)); message ('Credential saved.');
+                await request ('/credentials/' + encodeURIComponent (credential.id), 'PUT', { revision: Number (credentials.dataset.revision), credential }); field (credentials, 'passphrase').value = ''; await refresh (); editCredential (configuration.credentials.find (entry => entry.id === credential.id)); message ('Credential saved.');
             }); });
             for (const [kind, form] of [['user', users], ['credential', credentials]]) document.getElementById ('delete-' + kind).addEventListener ('click', event => { void perform (event.target, async () => {
                 if (confirm ('Remove this ' + kind + '?')) { await request ('/' + kind + 's/' + encodeURIComponent (form.dataset.editing), 'DELETE', { revision: configuration.revision }); await refresh (); if (kind === 'user') editUser (); else editCredential (); message ('Removed.'); }

@@ -115,10 +115,14 @@ export class BackupService {
             if (run) { run.state = state; run.message = message; run.exitCode = exitCode; run.finishedAt = new Date ().toISOString (); }
         });
     }
-    cancel (id: string): void {
+    async cancel (id: string): Promise<void> {
         const controller = this.controllers.get (id);
         if (!controller) throw Object.assign (Error ('Run is not active'), { status: 409 });
         controller.abort ();
+        await this.change (state => {
+            const run = state.runs.find (item => item.id === id);
+            if (run?.state === 'queued') { run.state = 'cancelled'; run.message = 'Cancelled before starting'; run.finishedAt = new Date ().toISOString (); }
+        });
     }
     async tick (now = new Date ()): Promise<void> {
         if (this.stopped) return;

@@ -9,8 +9,9 @@ import type { BackupDefinition, BackupCredential } from './management-schema';
 import type { BackupRun } from './backup-runtime';
 import { BackupLog, command, credentialEnvironment, privateRunDirectory, shellQuote, terminate } from './backup-process';
 import { effectiveExclusions } from './exclusion-templates';
+import { treeFile, indexMatchesRepository, recordIndexRepository } from './backup-index';
+export { treeFile } from './backup-index';
 
-export function treeFile (backup: BackupDefinition): string { return path.resolve ('data/managed', backup.id + '-data-tree.bin'); }
 export function createArguments (backup: BackupDefinition, archive: string, repository = backup.repository): string[] {
     return ['create', '--stats', '--json', '--show-rc', '--lock-wait', '60', '--compression', backup.compression,
         '--noatime', '--nobsdflags', '--numeric-ids', ...(backup.oneFileSystem ? ['--one-file-system'] : []),
@@ -117,10 +118,18 @@ export function createBackupExecutor (onIndexed: (backup: BackupDefinition) => P
             if (backup.index) {
                 await fs.mkdir (path.dirname (treeFile (backup)), { recursive: true, mode: 0o700 });
                 const filter = backup.id.replace (/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const code = await command (process.execPath, [path.resolve (__dirname, '../tree.js'), '-c', '-a', treeFile (backup), '/^' + filter + '-'], log.stream,
-                    { signal, env: { ...env, BORG_WEBGUI_INDEX_REPO: backup.repository } });
-                log.write ('Tree index exit code: ' + code + '\n'); result = Math.max (result, code);
-                if (code === 0) await onIndexed (backup);
+                const reusable = await indexMatchesRepository (backup);
+                const directory = reusable ? path.dirname (treeFile (backup)) : await fs.mkdtemp (path.join (path.dirname (treeFile (backup)), '.rebuild-'));
+                const target = path.join (directory, path.basename (treeFile (backup)));
+                try {
+                    const code = await command (process.execPath, [path.resolve (__dirname, '../tree.js'), '-c', '-a', target, '/^' + filter + '-'], log.stream,
+                        { signal, env: { ...env, BORG_WEBGUI_INDEX_REPO: backup.repository } });
+                    log.write ('Tree index exit code: ' + code + '\n'); result = Math.max (result, code);
+                    if (code === 0) {
+                        if (!reusable) await fs.rename (target, treeFile (backup));
+                        await recordIndexRepository (backup); await onIndexed (backup);
+                    }
+                } finally { if (!reusable) await fs.rm (directory, { recursive: true, force: true }); }
             }
             return result;
         } catch (error) {

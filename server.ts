@@ -20,6 +20,8 @@ import { BackupService } from './backup-runtime';
 import { createBackupExecutor, treeFile } from './backup-engine';
 import { credentialEnvironment } from './backup-process';
 import { allowed } from './management-schema';
+import { indexMatchesRepository } from './backup-index';
+import type { BackupDefinition } from './management-schema';
 import { ZodError } from 'zod';
 import type { DataConfig, TreeEntry, StatusEntry, RestoreInput, RestoreJob } from './types';
 
@@ -33,7 +35,7 @@ function background (task: Promise<unknown>): void {
 
 async function main (): Promise<void> {
 const app      = express ();
-const trees: Record<string, TreeEntry> = {};
+const trees = Object.create (null) as Record<string, TreeEntry>;
 const queue: (StatusEntry | RestoreJob)[] = [];
 let queue_active = 0;
 
@@ -117,8 +119,8 @@ async function continue_read_borg_log () {
 }
 
 
-const watching_tree: Record<string, number> = {};
-const watcher_tree: Record<string, fs.FSWatcher> = {};
+const watching_tree = Object.create (null) as Record<string, number>;
+const watcher_tree = Object.create (null) as Record<string, fs.FSWatcher>;
 function setup_watch_tree (name: string) {
     watching_tree[name] ??= 0;
     watcher_tree[name]?.close ();
@@ -175,7 +177,8 @@ async function openTree (conf: DataConfig & { db?: DBuffer }) {
 }
 
 async function syncManagedTrees (): Promise<void> {
-    const definitions = store.snapshot ().backups.filter (backup => backup.index);
+    const definitions: BackupDefinition[] = [];
+    for (const backup of store.snapshot ().backups) if (backup.index && await indexMatchesRepository (backup)) definitions.push (backup);
     const ids = new Set (definitions.map (backup => backup.id));
     for (const id of managedTrees) if (!ids.has (id)) {
         watcher_tree[id]?.close (); delete watcher_tree[id];

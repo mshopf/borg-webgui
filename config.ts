@@ -1,4 +1,5 @@
 import { readFileSync, existsSync } from 'node:fs';
+import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { Config, DataConfig } from './types';
 
@@ -80,4 +81,20 @@ export function readConfig (): Config {
         return parseConfigValue (value);
     }
     return parseConfig (readFileSync (filename, 'utf8'));
+}
+
+export async function initializeJsonSettings (directory: string): Promise<void> {
+    const filename = path.join (directory, 'server.json');
+    try { await fs.access (filename); return; }
+    catch (error) {
+        if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error;
+    }
+    let legacyExists = false;
+    try { await fs.lstat (path.resolve ('config.js')); legacyExists = true; }
+    catch (error) {
+        if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error;
+    }
+    // A malformed, unreadable, or broken legacy deployment must never become defaults.
+    const config = legacyExists ? readConfig () : { httpPort: 8080, data: [], max_cache_entries: 5000, max_status_entries: 30 };
+    await fs.writeFile (filename, JSON.stringify (config, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
 }
