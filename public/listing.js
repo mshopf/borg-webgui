@@ -51,12 +51,14 @@ function parse_archives (ar) {
     for (const e of ar) {
         var entry = { name: e };
         if (e != null) {
-            const d = new Date (e.replace (/^(....-..-..)-(..)(..)(..)$/, '$1T$2:$3:$4.000Z'));
+            const date = e.split ('@')[0];
+            const d = new Date (date.replace (/^(....-..-..)-(..)(..)(..)$/, '$1T$2:$3:$4.000Z'));
             if (isNaN (d)) {
                 console.log ('Invalid date: '+e);
             }
             entry.time = d.getTime();
             entry.descr = 'Backup performed on '+d.toLocaleString();
+            if (e.includes ('@')) entry.descr += ' (archive ' + e.split ('@')[1] + ')';
             // Parse all times *before* 6am as day before - that's the way people tick
             const t = entry.time - 6*60*60*1000;
             const dd = new Date (t);
