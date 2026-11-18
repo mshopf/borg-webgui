@@ -1,0 +1,10 @@
+{
+  "httpPort": 8080,
+  "data": [],
+  "max_cache_entries": 5000,
+  "max_status_entries": 30,
+  "client_config": {
+    "max_restore_entries_trivial": 1000,
+    "max_restore_size_trivial": 104857600
+  }
+}

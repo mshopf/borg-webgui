@@ -1,0 +1,42 @@
+
+#
+# /
+#
+
+*.cache
+/var/cache
+/var/tmp/*
+/tmp/*
+/usr/src/linux-*
+/root/.beagle
+/var/lib/locatedb
+/dev/*
+/proc/*
+/sys/*
+/run/*
+
+#
+# /local
+#
+/local/srv/borg-webgui/*-data-tree.bin
+/local/srv/borg-webgui/*-data-tree.bin.new
+/local/srv/borg-webgui/data/*-data-tree.bin
+/local/srv/borg-webgui/data/*-data-tree.bin.new
+
+#
+# /group
+#
+/group/group/senetics/_RESTORE
+
+#
+# /private
+#
+/private/DrSening/_RESTORE
+
+#
+# Everywhere
+#
+
+# Trashcan from smb
+*/.recycle
+

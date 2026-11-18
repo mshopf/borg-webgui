@@ -5,7 +5,9 @@ const fs_p     = require ('node:fs').promises;
 const stream_p = require ('node:stream').promises;
 const DBuffer  = require ('./dbuffer');
 const { Borg, parseTime } = require ('./borg');
-const config   = eval ('('+fs.readFileSync ('./config.js', 'utf8')+')');
+const path     = require ('node:path');
+const jsonConfig = path.resolve (process.env.BORG_WEBGUI_CONFIG_DIR ?? './etc', 'server.json');
+const config = fs.existsSync (jsonConfig) ? JSON.parse (fs.readFileSync (jsonConfig, 'utf8')) : eval ('('+fs.readFileSync ('./config.js', 'utf8')+')');
 
 // Offline JSON/bz2 imports and tree inspection do not require Borg installed.
 var borg;
@@ -184,8 +186,9 @@ async function read_tree (archivename, file, archive, tree, _find_tree, _add_tre
             stream = stream.pipe (bz2());
         }
     } else {
-        const repo = config._data[archivename].borg_repo ?? config.borg_repo;
+        const repo = process.env.BORG_WEBGUI_INDEX_REPO ?? config._data[archivename]?.borg_repo ?? config.borg_repo;
         const cmdargs = getBorg ().listArgs (repo, file);
+        cmdargs.splice (cmdargs.indexOf ('list') + 1, 0, '--lock-wait', '60');
         console.error ('borg ' + cmdargs.join (' '));
         const { child, completion } = getBorg ().start (cmdargs);
         child_promise = completion;
@@ -536,7 +539,7 @@ async function main () {
     // parse borg list of archives if wanted
     var obj_archives = null;
     if (files[0] && files[0][0] === '/' && files.length === 1) {
-        const repo = config._data[archivename].borg_repo ?? config.borg_repo;
+        const repo = process.env.BORG_WEBGUI_INDEX_REPO ?? config._data[archivename]?.borg_repo ?? config.borg_repo;
         const filter = new RegExp (files[0].slice(1));
         const args = getBorg ().archivesArgs (repo);
         console.error ('reading borg archive list: borg ' + args.join (' '));

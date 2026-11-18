@@ -9,6 +9,7 @@ export interface DataConfig {
     enable: boolean;
     borg_repo?: string;
     borg_args?: string[];
+    credentialId?: string;
 }
 export interface ClientConfig {
     max_restore_entries_trivial: number;
