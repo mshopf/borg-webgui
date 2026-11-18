@@ -3,3 +3,5 @@ node_modules
 data
 log
 config.js
+
+dist/
