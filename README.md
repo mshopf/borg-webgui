@@ -64,6 +64,8 @@ lockfile and both TypeScript aliases so building and linting stay reproducible.
 
 Use `npm run setup -- admin` to create the first administrator, then open **Manage backups** or **Credentials & access** from the main page. New deployments keep runtime settings in `etc/server.json` and backup definitions, credentials, schedules and access grants in `etc/management.json`. Existing `config.js` deployments remain readable and their users are imported once.
 
+Configure shared source paths and separate destinations with their own schedules, credentials and retention. **Run history** shows live output, downloadable logs and per-destination statistics.
+
 See the [backup-management guide](docs/backup-management.md) for local/active and SSH pull modes, retention, exact scheduling, exclusion templates, account permissions, migration and operational details.
 
 ## Configuration
@@ -200,7 +202,7 @@ When the process is finished, the restored entries will show up within the confi
 
 Bug tracking is not set up yet.
 
-`npm test` runs self-contained tree, index, and UI regression tests without a Borg repository. The legacy scripts `test.sh` and `test_data.js` require old external fixtures and are not part of this test suite.
+`npm test` runs tree, index, server, and UI regression tests. When Borg 1 is installed, it also creates temporary repositories to verify backup archives and run statistics. The legacy scripts `test.sh` and `test_data.js` require old external fixtures and are not part of this test suite.
 
 [ ] write buffer full\
   (node:414855) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 drain listeners added to [WriteStream]. Use emitter.setMaxListeners() to increase limit

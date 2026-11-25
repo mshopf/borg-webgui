@@ -35,90 +35,442 @@ function table (root, headers) {
 async function refresh () {
     configuration = await request ('/configuration');
     document.getElementById ('admin-content').hidden = false;
-    for (const form of document.forms) if (!form.dataset.editing && field (form, 'id')?.value === '') form.dataset.revision = configuration.revision;
-    if (page === 'backups') { renderBackups (); renderBackupOptions (); await renderRuns (); }
+    for (const form of document.forms) if (page !== 'backups' && !form.dataset.editing && field (form, 'id')?.value === '') form.dataset.revision = configuration.revision;
+    if (page === 'backups') {
+        runs = configuration.runs;
+        renderBackups (); credentialOptions (); renderHistoryFilter ();
+        if (destinations.length) renderDestinationActions ();
+        if (view === 'history') renderHistory ();
+    }
     else { renderUsers (); renderCredentials (); }
 }
-function backupFormValue () {
-    const form = document.getElementById ('backup-form');
+let sourceId;
+let destinationIndex = 0;
+let destinations = [];
+let runs = [];
+let historyPage = 0;
+let watchedRun;
+let watchVersion = 0;
+let view = 'sources';
+let polling = false;
+
+const runActive = run => run.state === 'queued' || run.state === 'running';
+const sourceKey = backup => backup.sourceId ?? backup.id;
+const historyPageSize = 12;
+const backupForm = () => document.getElementById ('backup-form');
+
+function sourceGroups () {
+    const groups = new Map ();
+    for (const backup of configuration.backups) {
+        const id = sourceKey (backup);
+        if (!groups.has (id)) groups.set (id, []);
+        groups.get (id).push (backup);
+    }
+    return groups;
+}
+function sourceValues () {
+    const form = backupForm ();
+    const value = name => field (form, name).value;
+    const source = { sourceName: value ('sourceName').trim (), mode: value ('mode'), sources: lines (value ('sources')) };
+    if (source.mode === 'pull') source.remote = { host: value ('host').trim (), user: value ('user').trim (), port: Number (value ('port')) };
+    return source;
+}
+function destinationValues () {
+    const form = backupForm ();
     const value = name => field (form, name).value;
     const checked = name => field (form, name).checked;
-    const backup = { id: value ('id'), name: value ('name'), enabled: checked ('enabled'), mode: value ('mode'), repository: value ('repository'), sources: lines (value ('sources')),
+    return {
+        id: value ('id').trim (), name: value ('name').trim (), enabled: checked ('enabled'), repository: value ('repository').trim (),
         credentialId: value ('credentialId') || undefined,
-        schedule: { frequency: value ('frequency'), timezone: value ('timezone'), times: values (value ('times')), weekdays: [...document.querySelectorAll ('#weekdays input:checked')].map (node => Number (node.value)), monthdays: values (value ('monthdays')).map (Number) },
+        schedule: { frequency: value ('frequency'), timezone: value ('timezone').trim (), times: values (value ('times')),
+            weekdays: [...document.querySelectorAll ('#weekdays input:checked')].map (node => Number (node.value)), monthdays: values (value ('monthdays')).map (Number) },
         templates: [...document.querySelectorAll ('#templates input:checked')].map (node => node.value), exclusions: lines (value ('exclusions')),
         retention: { enabled: checked ('retentionEnabled'), daily: Number (value ('daily')), weekly: Number (value ('weekly')), monthly: Number (value ('monthly')), yearly: Number (value ('yearly')) },
-        compact: checked ('compact'), compression: value ('compression'), oneFileSystem: checked ('oneFileSystem'), excludeCaches: checked ('excludeCaches'), index: checked ('index'), restoreDirectory: value ('restoreDirectory'), timeoutMinutes: Number (value ('timeoutMinutes')) };
-    if (backup.mode === 'pull') backup.remote = { host: value ('host'), user: value ('user'), port: Number (value ('port')) };
-    return backup;
+        compact: checked ('compact'), compression: value ('compression'), oneFileSystem: checked ('oneFileSystem'),
+        excludeCaches: checked ('excludeCaches'), index: checked ('index'), restoreDirectory: value ('restoreDirectory').trim (), timeoutMinutes: Number (value ('timeoutMinutes'))
+    };
 }
-function renderBackupOptions () {
-    const form = document.getElementById ('backup-form');
-    const selected = field (form, 'credentialId').value; const select = field (form, 'credentialId'); select.replaceChildren ();
+function defaultDestination () {
+    return {
+        id: '', name: '', repository: '', enabled: false, compression: 'lz4', timeoutMinutes: 720, restoreDirectory: './restore',
+        oneFileSystem: true, excludeCaches: true, index: true, compact: false, exclusions: [],
+        templates: ['linux', 'caches', 'trash', 'webgui'],
+        schedule: { frequency: 'daily', timezone: configuration.serverTimezone, times: ['03:00'], monthdays: [1], weekdays: [1, 2, 3, 4, 5, 6, 7] },
+        retention: { enabled: true, daily: 14, weekly: 8, monthly: 24, yearly: 10 }
+    };
+}
+function credentialOptions () {
+    const select = field (backupForm (), 'credentialId');
+    const selected = select.value;
+    select.replaceChildren ();
     element ('option', 'Use service account environment', select, { value: '' });
-    for (const credential of configuration.credentials) element ('option', credential.name, select, { value: credential.id }); select.value = selected;
-    const root = document.getElementById ('templates'); const selectedTemplates = [...root.querySelectorAll ('input:checked')].map (node => node.value);
-    const initial = !root.children.length; root.replaceChildren ();
-    for (const template of configuration.templates) {
-        const label = element ('label', undefined, root);
-        element ('input', undefined, label, { type: 'checkbox', value: template.id, checked: initial ? ['linux', 'caches', 'trash', 'webgui'].includes (template.id) : selectedTemplates.includes (template.id) });
-        label.appendChild (document.createTextNode (' ' + template.name)); element ('small', template.description, label);
+    for (const credential of configuration.credentials) element ('option', credential.name, select, { value: credential.id });
+    selectCredential (selected);
+}
+function selectCredential (id) {
+    const select = field (backupForm (), 'credentialId');
+    select.querySelector ('[data-missing]')?.remove ();
+    if (id && ![...select.options].some (option => option.value === id)) {
+        const missing = element ('option', 'Unavailable credential (' + id + ')', select, { value: id });
+        missing.dataset.missing = 'true';
     }
+    select.value = id ?? '';
 }
 function modeFields () {
-    const form = document.getElementById ('backup-form'); const pull = field (form, 'mode').value === 'pull';
+    const form = backupForm ();
+    const pull = field (form, 'mode').value === 'pull';
     document.getElementById ('remote-fields').hidden = !pull;
+    for (const name of ['host', 'user', 'port']) field (form, name).disabled = !pull;
     field (form, 'host').required = pull; field (form, 'user').required = pull;
     document.getElementById ('weekdays').hidden = field (form, 'frequency').value !== 'weekly';
     document.getElementById ('monthdays-label').hidden = field (form, 'frequency').value !== 'monthly';
 }
-function editBackup (backup) {
-    const form = document.getElementById ('backup-form'); form.reset (); form.dataset.editing = backup?.id ?? ''; form.dataset.revision = configuration.revision;
-    field (form, 'id').readOnly = Boolean (backup); document.getElementById ('delete-backup').hidden = !backup;
-    document.getElementById ('editor-title').textContent = backup ? 'Edit ' + backup.name : 'Add backup';
-    field (form, 'timezone').value = configuration.serverTimezone;
-    if (backup) {
-        for (const name of ['id', 'name', 'mode', 'repository', 'compression', 'timeoutMinutes', 'restoreDirectory']) field (form, name).value = backup[name];
-        for (const name of ['enabled', 'compact', 'oneFileSystem', 'excludeCaches', 'index']) field (form, name).checked = backup[name];
-        field (form, 'credentialId').value = backup.credentialId ?? '';
-        field (form, 'sources').value = backup.sources.join ('\n'); field (form, 'exclusions').value = backup.exclusions.join ('\n');
-        for (const name of ['frequency', 'timezone']) field (form, name).value = backup.schedule[name];
-        field (form, 'times').value = backup.schedule.times.join (', '); field (form, 'monthdays').value = backup.schedule.monthdays.join (', ');
-        for (const input of document.querySelectorAll ('#weekdays input')) input.checked = backup.schedule.weekdays.includes (Number (input.value));
-        for (const input of document.querySelectorAll ('#templates input')) input.checked = backup.templates.includes (input.value);
-        field (form, 'retentionEnabled').checked = backup.retention.enabled;
-        for (const name of ['daily', 'weekly', 'monthly', 'yearly']) field (form, name).value = backup.retention[name];
-        if (backup.mode === 'pull') for (const name of ['host', 'user', 'port']) field (form, name).value = backup.remote[name];
-    } else {
-        for (const input of document.querySelectorAll ('#weekdays input')) input.checked = true;
-        for (const input of document.querySelectorAll ('#templates input')) input.checked = ['linux', 'caches', 'trash', 'webgui'].includes (input.value);
-    }
-    document.getElementById ('exclusion-preview-label').hidden = true; modeFields ();
+function editSource (id) {
+    const group = sourceGroups ().get (id);
+    const source = group?.[0];
+    const form = backupForm ();
+    sourceId = source ? id : undefined;
+    form.dataset.revision = configuration.revision;
+    field (form, 'sourceName').value = source?.sourceName ?? source?.name ?? '';
+    field (form, 'sources').value = source?.sources.join ('\n') ?? '';
+    field (form, 'mode').value = source?.mode ?? 'local';
+    const remote = source?.remote;
+    for (const [name, value] of Object.entries ({ host: remote?.host ?? '', user: remote?.user ?? 'root', port: remote?.port ?? 22 })) field (form, name).value = value;
+    destinations = group ? group.map (destination => ({ saved: destination, draft: destination })) : [{ draft: defaultDestination () }];
+    document.getElementById ('editor-title').textContent = source ? 'Edit ' + field (form, 'sourceName').value : 'Add source';
+    document.getElementById ('delete-backup').hidden = !source;
+    form.dataset.dirty = '';
+    loadDestination (0);
+    renderBackups ();
 }
-function renderBackups () {
-    const body = table (document.getElementById ('backup-list'), ['Backup', 'Next run', 'Actions']);
-    for (const backup of configuration.backups) {
-        const row = element ('tr', undefined, body); const label = element ('td', undefined, row);
-        element ('strong', backup.name, label); element ('small', backup.id + ' · ' + backup.mode, label);
-        element ('td', stamp (configuration.nextRuns[backup.id]), row);
-        const actions = element ('td', undefined, row, { className: 'actions' });
-        button (actions, 'Edit', () => { editBackup (backup); });
-        button (actions, 'Run now', async () => { if (confirm ('Run backup ' + backup.name + ' now?')) { await request ('/backups/' + encodeURIComponent (backup.id) + '/run', 'POST', {}); await renderRuns (); } });
-        button (actions, 'Initialize repository', async () => {
-            if (confirm ('Initialize a NEW encrypted repository for ' + backup.name + '? Existing repositories must not be reinitialized. A stored passphrase is required.')) { await request ('/backups/' + encodeURIComponent (backup.id) + '/initialize', 'POST', {}); await renderRuns (); }
+function saveDestinationDraft () {
+    destinations[destinationIndex].draft = destinationValues ();
+}
+function loadDestination (index) {
+    destinationIndex = index;
+    const form = backupForm ();
+    const { saved, draft } = destinations[index];
+    for (const name of ['id', 'name', 'repository', 'compression', 'timeoutMinutes', 'restoreDirectory']) field (form, name).value = draft[name];
+    for (const name of ['enabled', 'compact', 'oneFileSystem', 'excludeCaches', 'index']) field (form, name).checked = draft[name];
+    field (form, 'id').readOnly = Boolean (saved);
+    selectCredential (draft.credentialId);
+    field (form, 'exclusions').value = draft.exclusions.join ('\n');
+    for (const name of ['frequency', 'timezone']) field (form, name).value = draft.schedule[name];
+    field (form, 'times').value = draft.schedule.times.join (', ');
+    field (form, 'monthdays').value = draft.schedule.monthdays.join (', ');
+    for (const input of document.querySelectorAll ('#weekdays input')) input.checked = draft.schedule.weekdays.includes (Number (input.value));
+    for (const input of document.querySelectorAll ('#templates input')) input.checked = draft.templates.includes (input.value);
+    field (form, 'retentionEnabled').checked = draft.retention.enabled;
+    for (const name of ['daily', 'weekly', 'monthly', 'yearly']) field (form, name).value = draft.retention[name];
+    document.getElementById ('exclusion-preview-label').hidden = true;
+    modeFields ();
+    renderDestinationTabs ();
+    renderDestinationActions ();
+}
+function renderDestinationTabs () {
+    const tabs = document.getElementById ('destination-tabs');
+    tabs.replaceChildren ();
+    for (const [index, destination] of destinations.entries ()) {
+        const tab = element ('button', destination.draft.name || 'Destination ' + (index + 1), tabs, { type: 'button' });
+        tab.setAttribute ('aria-pressed', index === destinationIndex);
+        tab.addEventListener ('click', () => {
+            if (index === destinationIndex) return;
+            saveDestinationDraft (); loadDestination (index);
+            tabs.children[index].focus ();
         });
     }
-    if (!configuration.backups.length) element ('p', 'No managed backups yet.', document.getElementById ('backup-list'));
 }
-async function renderRuns () {
-    const runs = await request ('/runs'); const body = table (document.getElementById ('run-list'), ['Backup / action', 'State', 'Started / queued', 'Log']);
-    for (const run of runs.slice ().reverse ().slice (0, 50)) {
-        const row = element ('tr', undefined, body); element ('td', run.backupId + ' · ' + run.action, row);
-        const state = element ('td', undefined, row); element ('span', run.state, state, { className: 'status ' + run.state }); element ('small', run.message, state);
-        element ('td', stamp (run.startedAt ?? run.queuedAt), row); const actions = element ('td', undefined, row);
-        element ('a', 'Open log', actions, { href: '/api/admin/runs/' + encodeURIComponent (run.id) + '/log', target: '_blank', rel: 'noopener' });
-        if (['running', 'queued'].includes (run.state)) button (actions, 'Cancel', async () => { await request ('/runs/' + encodeURIComponent (run.id) + '/cancel', 'POST', {}); await renderRuns (); });
+function renderDestinationActions () {
+    const root = document.getElementById ('destination-actions');
+    root.replaceChildren ();
+    const { saved } = destinations[destinationIndex];
+    if (saved) {
+        const active = runs.find (run => run.backupId === saved.id && runActive (run));
+        if (active) button (root, 'Watch run', () => watchRun (active.id));
+        else {
+            button (root, 'Run now', async () => {
+                if (!confirm ('Run the saved configuration for ' + saved.name + ' now?')) return;
+                const run = await request ('/backups/' + encodeURIComponent (saved.id) + '/run', 'POST', {});
+                runs = [...runs, run]; await watchRun (run.id);
+            }).classList.add ('primary');
+            button (root, 'Initialize repository', async () => {
+                if (!confirm ('Initialize a new encrypted repository for ' + saved.name + '? A stored passphrase is required.')) return;
+                const run = await request ('/backups/' + encodeURIComponent (saved.id) + '/initialize', 'POST', {});
+                runs = [...runs, run]; await watchRun (run.id);
+            });
+        }
+        const next = configuration.nextRuns[saved.id];
+        element ('small', next ? 'Next scheduled run ' + stamp (next) : 'Schedule disabled', root);
     }
+    if (destinations.length > 1) button (root, 'Remove destination', () => {
+        if (saved && !confirm ('Remove ' + saved.name + ' on save? Its archives and logs will be kept.')) return;
+        destinations.splice (destinationIndex, 1);
+        backupForm ().dataset.dirty = 'true';
+        loadDestination (Math.min (destinationIndex, destinations.length - 1));
+    }, true);
+}
+function canDiscard () {
+    return !backupForm ().dataset.dirty || confirm ('Discard unsaved source changes?');
+}
+function renderBackups () {
+    const root = document.getElementById ('backup-list');
+    root.replaceChildren ();
+    const groups = sourceGroups ();
+    for (const [id, group] of groups) {
+        const source = group[0];
+        const card = element ('button', undefined, root, { type: 'button', className: 'source-card' });
+        card.setAttribute ('aria-pressed', id === sourceId);
+        card.addEventListener ('click', () => {
+            if (id !== sourceId && canDiscard ()) {
+                editSource (id);
+                root.querySelector ('[aria-pressed=true]')?.focus ();
+            }
+        });
+        element ('strong', source.sourceName ?? source.name, card);
+        const paths = source.sources.join (', ');
+        element ('span', source.mode === 'pull' ? source.remote.host + ' · ' + paths : paths, card, { className: 'source-path', title: paths });
+        element ('span', group.length + (group.length === 1 ? ' destination' : ' destinations'), card, { className: 'source-count' });
+    }
+    if (!groups.size) element ('p', 'No sources configured.', root, { className: 'empty' });
+    renderOverview ();
+}
+function metric (root, name, value) {
+    const card = element ('div', undefined, root, { className: 'metric' });
+    element ('span', name, card); element ('strong', String (value), card);
+}
+function renderOverview () {
+    const root = document.getElementById ('overview-metrics');
+    root.replaceChildren ();
+    metric (root, 'Sources', sourceGroups ().size);
+    metric (root, 'Destinations', configuration.backups.length);
+    metric (root, 'Active runs', runs.filter (runActive).length);
+}
+function renderHistoryFilter () {
+    const filter = document.getElementById ('history-filter');
+    const previous = filter.value;
+    const labels = new Map (runs.map (run => [run.backupId, run.destinationName ?? run.backupId]));
+    for (const backup of configuration.backups) labels.set (backup.id, (backup.sourceName ? backup.sourceName + ' / ' : '') + backup.name);
+    filter.replaceChildren ();
+    element ('option', 'All destinations', filter, { value: '' });
+    for (const [id, name] of labels) element ('option', name, filter, { value: id });
+    filter.value = labels.has (previous) ? previous : '';
+}
+function bytes (value) {
+    if (value === undefined) return '—';
+    const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'];
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+    return new Intl.NumberFormat (undefined, { maximumFractionDigits: 1 }).format (value) + ' ' + units[unit];
+}
+function duration (run) {
+    if (!run.startedAt || !run.finishedAt) return '—';
+    const seconds = Math.max (0, Math.round ((Date.parse (run.finishedAt) - Date.parse (run.startedAt)) / 1000));
+    if (seconds >= 3600) return Math.floor (seconds / 3600) + 'h ' + Math.floor ((seconds % 3600) / 60) + 'm';
+    return seconds >= 60 ? Math.floor (seconds / 60) + 'm ' + (seconds % 60) + 's' : seconds + 's';
+}
+function runState (state) {
+    return ({ done: 'Succeeded', error: 'Failed', warning: 'Warning', queued: 'Queued', running: 'Running', cancelled: 'Cancelled', interrupted: 'Interrupted' })[state] ?? state;
+}
+function renderHistory () {
+    const destination = document.getElementById ('history-filter').value;
+    const filtered = runs.filter (run => !destination || run.backupId === destination);
+    const count = Math.ceil (filtered.length / historyPageSize);
+    historyPage = Math.min (historyPage, Math.max (0, count - 1));
+    const completed = filtered.filter (run => run.action === 'backup' && !runActive (run));
+    const stored = completed.flatMap (run => run.statistics?.deduplicatedBytes === undefined ? [] : [run.statistics.deduplicatedBytes]);
+    const metrics = document.getElementById ('history-metrics');
+    metrics.replaceChildren ();
+    metric (metrics, 'Completed backups', completed.length);
+    metric (metrics, 'Succeeded', completed.filter (run => run.state === 'done').length);
+    metric (metrics, 'Warnings or failures', completed.filter (run => ['warning', 'error', 'interrupted'].includes (run.state)).length);
+    metric (metrics, 'Deduplicated data written', bytes (stored.length ? stored.reduce ((total, size) => total + size, 0) : undefined));
+    const root = document.getElementById ('run-list');
+    if (!filtered.length) { root.replaceChildren (); element ('p', 'No runs for this selection.', root, { className: 'empty' }); }
+    else {
+        const body = table (root, ['Destination', 'Started', 'Status', 'Duration', 'Archive size', 'Output']);
+        for (const run of filtered.slice ().reverse ().slice (historyPage * historyPageSize, (historyPage + 1) * historyPageSize)) {
+            const row = element ('tr', undefined, body);
+            const dest = element ('td', undefined, row);
+            element ('strong', run.destinationName ?? run.backupId, dest);
+            element ('small', run.sourceName ?? run.backupId, dest);
+            const time = element ('td', stamp (run.startedAt ?? run.queuedAt), row);
+            element ('small', run.action === 'initialize' ? 'Repository initialization' : run.origin === 'scheduled' ? 'Scheduled' : 'Manual', time);
+            const state = element ('td', undefined, row);
+            element ('span', runState (run.state), state, { className: 'status ' + run.state, title: run.message });
+            element ('td', duration (run), row);
+            const stats = element ('td', bytes (run.statistics?.originalBytes), row);
+            if (run.statistics?.files !== undefined) element ('small', run.statistics.files.toLocaleString () + ' files', stats);
+            if (run.statistics?.compressedBytes !== undefined) element ('small', bytes (run.statistics.compressedBytes) + ' compressed', stats);
+            if (run.statistics?.deduplicatedBytes !== undefined) element ('small', bytes (run.statistics.deduplicatedBytes) + ' deduplicated', stats);
+            const actions = element ('div', undefined, element ('td', undefined, row), { className: 'actions' });
+            button (actions, runActive (run) ? 'Watch' : 'View log', () => watchRun (run.id));
+            if (runActive (run)) button (actions, 'Cancel', async () => {
+                if (!confirm ('Cancel this backup run?')) return;
+                await request ('/runs/' + encodeURIComponent (run.id) + '/cancel', 'POST', {}); await pollRuns ();
+            });
+        }
+    }
+    document.getElementById ('history-pagination').hidden = count < 2;
+    document.getElementById ('newer-runs').disabled = historyPage === 0;
+    document.getElementById ('older-runs').disabled = historyPage + 1 >= count;
+    document.getElementById ('run-page').textContent = 'Page ' + (historyPage + 1) + ' of ' + count;
+}
+function showView (name) {
+    view = name;
+    const history = name === 'history';
+    document.getElementById ('sources-view').hidden = history;
+    document.getElementById ('history-view').hidden = !history;
+    document.getElementById ('new-backup').hidden = history;
+    document.getElementById ('view-title').textContent = history ? 'Run history' : 'Backup management';
+    document.getElementById ('view-description').textContent = history ? 'Watch running backups and review results from previous runs.' : 'Configure what gets backed up, where it goes, and when it runs.';
+    for (const button of document.querySelectorAll ('[data-view]')) {
+        if (button.dataset.view === name) button.setAttribute ('aria-current', 'page'); else button.removeAttribute ('aria-current');
+    }
+    if (history) renderHistory ();
+}
+async function watchRun (id) {
+    watchedRun = id;
+    watchVersion++;
+    showView ('history');
+    const panel = document.getElementById ('run-output');
+    panel.hidden = false;
+    const log = document.getElementById ('log-text');
+    log.textContent = 'Loading output…';
+    document.getElementById ('download-log').hidden = true;
+    const output = updateOutput ();
+    panel.scrollIntoView?. ({ block: 'nearest' });
+    log.focus ({ preventScroll: true });
+    await output;
+}
+async function updateOutput () {
+    const run = runs.find (entry => entry.id === watchedRun);
+    if (!run) {
+        document.getElementById ('output-status').textContent = 'This run is no longer in retained history.';
+        return;
+    }
+    const version = ++watchVersion;
+    const url = '/runs/' + encodeURIComponent (run.id);
+    document.getElementById ('output-title').textContent = run.archive;
+    const status = document.getElementById ('output-status');
+    const state = runState (run.state);
+    status.textContent = run.message === state ? state : state + ' · ' + run.message;
+    const output = await request (url + '/output');
+    if (version !== watchVersion) return;
+    const log = document.getElementById ('log-text');
+    const follow = log.scrollTop + log.clientHeight >= log.scrollHeight - 24;
+    const text = output.text ? output.text.replace (/\r\n?/g, '\n') : output.available ? 'Waiting for output…' : 'No log has been written for this run.';
+    if (log.textContent !== text) {
+        log.textContent = text;
+        if (follow) log.scrollTop = log.scrollHeight;
+    }
+    const download = document.getElementById ('download-log');
+    download.hidden = !output.available;
+    download.href = '/api/admin' + url + '/log';
+    if (output.truncated) status.textContent += ' · Showing the last 64 KiB';
+}
+async function pollRuns () {
+    if (polling) return;
+    polling = true;
+    try {
+        const previous = runs.find (run => run.id === watchedRun);
+        const next = await request ('/runs');
+        const runsChanged = JSON.stringify (next) !== JSON.stringify (runs);
+        const scheduleElapsed = Object.values (configuration.nextRuns).some (time => time && Date.parse (time) <= Date.now ());
+        if (runsChanged) {
+            runs = next;
+            renderOverview ();
+            renderHistoryFilter ();
+            if (view === 'history') renderHistory ();
+        }
+        if (scheduleElapsed) configuration.nextRuns = (await request ('/backups')).nextRuns;
+        if ((runsChanged || scheduleElapsed) && destinations.length) renderDestinationActions ();
+        const selected = runs.find (run => run.id === watchedRun);
+        if (view === 'history' && watchedRun && (!selected || runActive (selected) || (previous && runActive (previous)))) await updateOutput ();
+    } finally { polling = false; }
+}
+function initializeBackups () {
+    const form = backupForm ();
+    const weekdays = document.getElementById ('weekdays');
+    for (const [index, name] of ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].entries ()) {
+        const label = element ('label', undefined, weekdays, { className: 'check' });
+        element ('input', undefined, label, { type: 'checkbox', value: index + 1 });
+        label.appendChild (document.createTextNode (name));
+    }
+    for (const template of configuration.templates) {
+        const label = element ('label', undefined, document.getElementById ('templates'));
+        element ('input', undefined, label, { type: 'checkbox', value: template.id });
+        label.appendChild (document.createTextNode (' ' + template.name));
+        element ('small', template.description, label);
+    }
+    for (const zone of Intl.supportedValuesOf?. ('timeZone') ?? ['UTC']) element ('option', undefined, document.getElementById ('timezones'), { value: zone });
+    credentialOptions ();
+    editSource (sourceGroups ().keys ().next ().value);
+    form.addEventListener ('input', () => { form.dataset.dirty = 'true'; });
+    field (form, 'mode').addEventListener ('change', modeFields);
+    field (form, 'frequency').addEventListener ('change', modeFields);
+    document.getElementById ('new-backup').addEventListener ('click', () => { if (canDiscard ()) { editSource (); field (form, 'sourceName').focus (); } });
+    document.getElementById ('cancel-edit').addEventListener ('click', () => { if (canDiscard ()) editSource (sourceId); });
+    document.getElementById ('add-destination').addEventListener ('click', () => {
+        saveDestinationDraft ();
+        destinations.push ({ draft: defaultDestination () });
+        form.dataset.dirty = 'true';
+        loadDestination (destinations.length - 1);
+        field (form, 'name').focus ();
+    });
+    for (const control of document.querySelectorAll ('[data-view]')) control.addEventListener ('click', () => {
+        showView (control.dataset.view);
+        if (view === 'history' && watchedRun) void updateOutput ().catch (error => { message (error.message, true); });
+    });
+    document.getElementById ('history-filter').addEventListener ('change', () => { historyPage = 0; renderHistory (); });
+    document.getElementById ('newer-runs').addEventListener ('click', () => { historyPage--; renderHistory (); });
+    document.getElementById ('older-runs').addEventListener ('click', () => { historyPage++; renderHistory (); });
+    document.getElementById ('close-output').addEventListener ('click', () => {
+        watchedRun = undefined; watchVersion++;
+        document.getElementById ('run-output').hidden = true;
+        document.getElementById ('history-filter').focus ();
+    });
+    form.addEventListener ('submit', event => {
+        event.preventDefault ();
+        void perform (form.querySelector ('button[type=submit]'), async () => {
+            saveDestinationDraft ();
+            const incomplete = destinations.findIndex (({ draft }) => !draft.id || !draft.name || !draft.repository);
+            if (incomplete >= 0) {
+                loadDestination (incomplete);
+                form.reportValidity ();
+                throw Error ('Enter a name, archive prefix and repository for each destination.');
+            }
+            const id = sourceId ?? 'source-' + crypto.getRandomValues (new Uint32Array (4)).join ('-');
+            const source = sourceValues ();
+            form.inert = true;
+            try {
+                await request ('/sources/' + encodeURIComponent (id), 'PUT', {
+                    revision: Number (form.dataset.revision), destinations: destinations.map (({ draft }) => ({ ...draft, ...source, sourceId: id }))
+                });
+                await refresh (); editSource (id); message ('Source saved.');
+            } finally { form.inert = false; }
+        });
+    });
+    document.getElementById ('delete-backup').addEventListener ('click', event => {
+        void perform (event.target, async () => {
+            if (!confirm ('Remove this source and all its destination definitions? Archives and logs will be kept.')) return;
+            form.inert = true;
+            try {
+                await request ('/sources/' + encodeURIComponent (sourceId), 'DELETE', { revision: Number (form.dataset.revision) });
+                await refresh (); editSource (); message ('Source removed.');
+            } finally { form.inert = false; }
+        });
+    });
+    document.getElementById ('preview-exclusions').addEventListener ('click', event => {
+        void perform (event.target, async () => {
+            saveDestinationDraft ();
+            const backup = { ...destinations[destinationIndex].draft, ...sourceValues (), sourceId };
+            const repositories = destinations.map (({ draft }) => draft.repository).filter (Boolean);
+            const patterns = await request ('/preview-exclusions', 'POST', { backup, repositories });
+            document.getElementById ('exclusion-preview').value = patterns.join ('\n');
+            document.getElementById ('exclusion-preview-label').hidden = false;
+        });
+    });
+    setInterval (() => { if (!document.hidden) void pollRuns ().catch (error => { message (error.message, true); }); }, 3000);
 }
 function renderUsers () {
     const body = table (document.getElementById ('user-list'), ['User', 'Access', 'Actions']);
@@ -163,28 +515,8 @@ async function initialize () {
     try {
         await refresh ();
         document.getElementById ('refresh').addEventListener ('click', event => { void perform (event.target, refresh); });
-        if (page === 'backups') {
-            const form = document.getElementById ('backup-form');
-            const weekdays = document.getElementById ('weekdays');
-            for (const [index, name] of ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].entries ()) {
-                const label = element ('label', undefined, weekdays, { className: 'check' }); element ('input', undefined, label, { type: 'checkbox', value: index + 1, checked: true }); label.appendChild (document.createTextNode (name));
-            }
-            for (const zone of Intl.supportedValuesOf?. ('timeZone') ?? ['UTC']) element ('option', undefined, document.getElementById ('timezones'), { value: zone });
-            editBackup ();
-            field (form, 'mode').addEventListener ('change', modeFields); field (form, 'frequency').addEventListener ('change', modeFields);
-            document.getElementById ('new-backup').addEventListener ('click', () => { editBackup (); });
-            document.getElementById ('cancel-edit').addEventListener ('click', () => { editBackup (); });
-            form.addEventListener ('submit', event => { event.preventDefault (); void perform (form.querySelector ('button[type=submit]'), async () => {
-                const backup = backupFormValue (); await request ('/backups/' + encodeURIComponent (backup.id), 'PUT', { revision: Number (form.dataset.revision), backup }); await refresh (); editBackup (configuration.backups.find (entry => entry.id === backup.id)); message ('Backup saved.');
-            }); });
-            document.getElementById ('delete-backup').addEventListener ('click', event => { void perform (event.target, async () => {
-                if (confirm ('Remove this definition? Repository archives and restored files will be kept.')) { await request ('/backups/' + encodeURIComponent (form.dataset.editing), 'DELETE', { revision: Number (form.dataset.revision) }); await refresh (); editBackup (); message ('Definition removed.'); }
-            }); });
-            document.getElementById ('preview-exclusions').addEventListener ('click', event => { void perform (event.target, async () => {
-                const patterns = await request ('/preview-exclusions', 'POST', backupFormValue ()); document.getElementById ('exclusion-preview').value = patterns.join ('\n'); document.getElementById ('exclusion-preview-label').hidden = false;
-            }); });
-            setInterval (() => { void renderRuns ().catch (error => { message (error.message, true); }); }, 10000);
-        } else {
+        if (page === 'backups') initializeBackups ();
+        else {
             editUser (); editCredential ();
             document.getElementById ('new-user').addEventListener ('click', () => { editUser (); }); document.getElementById ('new-credential').addEventListener ('click', () => { editCredential (); });
             const users = document.getElementById ('user-form'); const credentials = document.getElementById ('credential-form');

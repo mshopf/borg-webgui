@@ -6,20 +6,25 @@ import type { ChildProcess } from 'node:child_process';
 import type { Writable } from 'node:stream';
 import { once } from 'node:events';
 import type { BackupDefinition, BackupCredential } from './management-schema';
-import type { BackupRun } from './backup-runtime';
+import { backupStatisticsSchema } from './backup-runtime';
+import type { BackupRun, BackupStatistics } from './backup-runtime';
 import { BackupLog, command, credentialEnvironment, privateRunDirectory, shellQuote, terminate } from './backup-process';
 import { effectiveExclusions } from './exclusion-templates';
 import { treeFile, indexMatchesRepository, recordIndexRepository } from './backup-index';
 export { treeFile } from './backup-index';
 
-export function createArguments (backup: BackupDefinition, archive: string, repository = backup.repository): string[] {
-    return ['create', '--stats', '--json', '--show-rc', '--lock-wait', '60', '--compression', backup.compression,
+// This suffix works as both a Borg glob and a JavaScript regular expression.
+const digit = '[0-9]';
+const archiveSuffix = digit.repeat (4) + '-' + digit.repeat (2) + '-' + digit.repeat (2) + '-' + digit.repeat (6);
+
+export function createArguments (backup: BackupDefinition, archive: string, repository = backup.repository, repositories: readonly string[] = []): string[] {
+    return ['create', '--json', '--progress', '--show-rc', '--lock-wait', '60', '--compression', backup.compression,
         '--noatime', '--nobsdflags', '--numeric-ids', ...(backup.oneFileSystem ? ['--one-file-system'] : []),
         ...(backup.excludeCaches ? ['--exclude-caches'] : []),
-        ...effectiveExclusions (backup).flatMap (pattern => ['--exclude', pattern]), '--', repository + '::' + archive, ...backup.sources];
+        ...effectiveExclusions (backup, repositories).flatMap (pattern => ['--exclude', pattern]), '--', repository + '::' + archive, ...backup.sources];
 }
 export function pruneArguments (backup: BackupDefinition): string[] {
-    return ['prune', '--list', '--show-rc', '--lock-wait', '60', '--glob-archives', backup.id + '-*',
+    return ['prune', '--list', '--show-rc', '--lock-wait', '60', '--glob-archives', backup.id + '-' + archiveSuffix,
         '--keep-daily', String (backup.retention.daily), '--keep-weekly', String (backup.retention.weekly),
         '--keep-monthly', String (backup.retention.monthly), '--keep-yearly', String (backup.retention.yearly), '--', backup.repository];
 }
@@ -77,15 +82,29 @@ export function pullInvocation (backup: Extract<BackupDefinition, {mode: 'pull'}
     return { args, input };
 }
 
-export function createBackupExecutor (onIndexed: (backup: BackupDefinition) => Promise<void> = async () => {}): (backup: BackupDefinition, credential: BackupCredential | undefined, run: BackupRun, signal: AbortSignal) => Promise<number> {
-    return async (backup, credential, run, signal) => {
+function completeStatistics (stdout: Buffer[]): BackupStatistics | undefined {
+    try {
+        const result = JSON.parse (Buffer.concat (stdout).toString ()) as { archive?: { stats?: Record<string, unknown> } };
+        const stats = result?.archive?.stats;
+        if (!stats) return;
+        const parsed = backupStatisticsSchema.safeParse ({
+            originalBytes: stats.original_size, compressedBytes: stats.compressed_size,
+            deduplicatedBytes: stats.deduplicated_size, files: stats.nfiles
+        });
+        if (parsed.success && Object.values (parsed.data).some (value => value !== undefined)) return parsed.data;
+    } catch { /* Borg can exit without producing a JSON report. */ }
+}
+
+export function createBackupExecutor (onIndexed: (backup: BackupDefinition) => Promise<void> = async () => {}) {
+    return async (backup: BackupDefinition, credential: BackupCredential | undefined, run: BackupRun, signal: AbortSignal,
+        record: (statistics: BackupStatistics) => void = () => {}, repositories: readonly string[] = []) => {
         await fs.mkdir (path.resolve ('log/backups'), { recursive: true, mode: 0o700 });
         const log = new BackupLog (path.resolve ('log/backups', run.id + '.log'), credential?.passphrase);
         const env = credentialEnvironment (credential);
-        const stage = async (label: string, bin: string, args: string[], input?: string) => {
+        const stage = async (label: string, bin: string, args: string[], input?: string, onStdout?: (chunk: Buffer) => void) => {
             signal.throwIfAborted ();
             log.write ('\n' + new Date ().toISOString () + ' ' + label + '\n');
-            const code = await command (bin, args, log.stream, { env, signal, input });
+            const code = await command (bin, args, log.stream, { env, signal, input, onStdout });
             log.write (label + ' exit code: ' + code + '\n');
             return code;
         };
@@ -98,6 +117,13 @@ export function createBackupExecutor (onIndexed: (backup: BackupDefinition) => P
                 return await stage ('Initialize repository', 'borg', ['init', '--encryption', 'repokey-blake2', '--', backup.repository]);
             }
             let createCode: number;
+            const stdout: Buffer[] = [];
+            let stdoutBytes = 0;
+            const onStdout = (chunk: Buffer) => {
+                stdoutBytes += chunk.length;
+                if (stdoutBytes <= 1024 * 1024) stdout.push (chunk);
+                else stdout.length = 0;
+            };
             if (backup.mode === 'pull') {
                 const directory = await privateRunDirectory (run.id);
                 try {
@@ -107,11 +133,13 @@ export function createBackupExecutor (onIndexed: (backup: BackupDefinition) => P
                     const server = await serveRepository (socketPath, backup.repository, log.stream);
                     try {
                         const invocation = pullInvocation (backup, credential, run, socketPath);
-                        createCode = await stage ('Remote Borg create', 'ssh', invocation.args, invocation.input);
+                        createCode = await stage ('Remote Borg create', 'ssh', invocation.args, invocation.input, onStdout);
                     } finally { await server.close (); }
                 } finally { await fs.rm (directory, { recursive: true, force: true }); }
-            } else createCode = await stage ('Borg create', 'borg', createArguments (backup, run.archive));
+            } else createCode = await stage ('Borg create', 'borg', createArguments (backup, run.archive, backup.repository, repositories), undefined, onStdout);
             if (createCode > 1) { log.write ('Create failed; skipping prune, compact, and indexing\n'); return createCode; }
+            const statistics = completeStatistics (stdout);
+            if (statistics) record (statistics);
             let result = createCode;
             if (backup.retention.enabled) result = Math.max (result, await stage ('Borg prune', 'borg', pruneArguments (backup)));
             if (backup.compact && result < 2) result = Math.max (result, await stage ('Borg compact', 'borg', ['compact', '--lock-wait', '60', '--', backup.repository]));
@@ -122,7 +150,7 @@ export function createBackupExecutor (onIndexed: (backup: BackupDefinition) => P
                 const directory = reusable ? path.dirname (treeFile (backup)) : await fs.mkdtemp (path.join (path.dirname (treeFile (backup)), '.rebuild-'));
                 const target = path.join (directory, path.basename (treeFile (backup)));
                 try {
-                    const code = await command (process.execPath, [path.resolve (__dirname, '../tree.js'), '-c', '-a', target, '/^' + filter + '-'], log.stream,
+                    const code = await command (process.execPath, [path.resolve (__dirname, '../tree.js'), '-c', '-a', target, '/^' + filter + '-' + archiveSuffix + '$'], log.stream,
                         { signal, env: { ...env, BORG_WEBGUI_INDEX_REPO: backup.repository } });
                     log.write ('Tree index exit code: ' + code + '\n'); result = Math.max (result, code);
                     if (code === 0) {

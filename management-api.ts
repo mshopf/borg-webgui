@@ -3,20 +3,27 @@ import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import { z } from 'zod';
 import argon2 from 'argon2';
 import path from 'node:path';
+import { promises as fs } from 'node:fs';
 import type { ManagementStore } from './management-store';
 import type { BackupService } from './backup-runtime';
 import type { AccessControl } from './access-control';
 import { backupSchema, credentialSchema, userSchema, idSchema, publicUser, publicCredential, allowed } from './management-schema';
 import { exclusionTemplates, effectiveExclusions } from './exclusion-templates';
+import { normalizeRepository } from './backup-repository';
 
 function route (handler: (req: Request<Record<string, string>, unknown, unknown>, res: Response) => unknown): RequestHandler<Record<string, string>, unknown, unknown> {
     return (req, res, next: NextFunction) => { void Promise.resolve ().then (() => handler (req, res)).catch (next); };
 }
 const revision = z.number ().int ().min (0);
 const deletion = z.strictObject ({ revision });
+const sourceWrite = z.strictObject ({ revision, destinations: z.array (backupSchema).min (1).max (1000) });
+const exclusionPreview = z.union ([backupSchema, z.strictObject ({
+    backup: backupSchema, repositories: z.array (z.string ().min (1).max (4096)).max (1000)
+})]);
 const userInput = userSchema.omit ({ passwordHash: true }).extend ({ password: z.string ().min (12).max (1024).optional () });
 const credentialInput = credentialSchema.extend ({ clearPassphrase: z.boolean ().optional () });
 function parameter (req: Request<Record<string, string>>, key = 'id'): string { return idSchema.parse (req.params[key]); }
+function conflict (message: string): never { throw Object.assign (Error (message), { status: 409 }); }
 
 export function managementRouter (store: ManagementStore, service: BackupService, access: AccessControl, onChanged: () => Promise<void>, legacyIds: () => string[]): express.Router {
     const router = express.Router ();
@@ -48,6 +55,23 @@ export function managementRouter (store: ManagementStore, service: BackupService
         res.type ('text/plain'); res.setHeader ('Cache-Control', 'no-store');
         return res.sendFile (run.id + '.log', { root: path.resolve ('log/backups') });
     });
+    router.get ('/runs/:id/output', route (async (req, res) => {
+        const run = service.runs ().find (item => item.id === req.params.id);
+        if (!run) return res.status (404).json ({ error: 'Unknown run' });
+        access.require (req, run.backupId, 'run');
+        res.setHeader ('Cache-Control', 'no-store');
+        const file = await fs.open (path.resolve ('log/backups', run.id + '.log'), 'r').catch ((error: NodeJS.ErrnoException) => {
+            if (error.code !== 'ENOENT') throw error;
+        });
+        if (!file) return res.json ({ text: '', truncated: false, available: false });
+        try {
+            const { size } = await file.stat ();
+            const start = Math.max (0, size - 64 * 1024);
+            const chunk = Buffer.alloc (size - start);
+            const { bytesRead } = await file.read (chunk, 0, chunk.length, start);
+            return res.json ({ text: chunk.toString ('utf8', 0, bytesRead), truncated: start > 0, available: true });
+        } finally { await file.close (); }
+    }));
     router.use ((req, _res, next) => { access.requireAdmin (req); next (); });
     router.get ('/configuration', (_req, res) => {
         const document = store.snapshot ();
@@ -55,7 +79,38 @@ export function managementRouter (store: ManagementStore, service: BackupService
         res.json ({ revision: document.revision, backups: document.backups, users: document.users.map (publicUser), credentials: document.credentials.map (publicCredential),
             templates: exclusionTemplates, nextRuns: service.nextRuns (), runs: service.runs (), serverTimezone: Intl.DateTimeFormat ().resolvedOptions ().timeZone, legacyBackups: legacyIds () });
     });
-    router.post ('/preview-exclusions', (req, res) => { res.json (effectiveExclusions (backupSchema.parse (req.body))); });
+    router.post ('/preview-exclusions', (req, res) => {
+        const input = exclusionPreview.parse (req.body);
+        const saved = store.snapshot ().backups;
+        const backup = 'backup' in input ? input.backup : input;
+        const repositories = saved.filter (destination => !backup.sourceId || (destination.sourceId ?? destination.id) !== backup.sourceId)
+            .map (destination => destination.repository);
+        if ('repositories' in input) repositories.push (...input.repositories.map (normalizeRepository));
+        res.json (effectiveExclusions (backup, repositories));
+    });
+    const updateSource = (remove: boolean) => route (async (req, res) => {
+        const id = parameter (req);
+        const input = remove ? { ...deletion.parse (req.body), destinations: [] } : sourceWrite.parse (req.body);
+        if (input.destinations.some (backup => backup.sourceId !== id || !backup.sourceName)) {
+            return res.status (400).json ({ error: 'Every destination must belong to this source' });
+        }
+        const result = await store.update (draft => {
+            const existing = draft.backups.filter (backup => (backup.sourceId ?? backup.id) === id);
+            const elsewhere = draft.backups.filter (backup => (backup.sourceId ?? backup.id) !== id);
+            if (remove && !existing.length) throw Object.assign (Error ('Unknown source'), { status: 404 });
+            if (existing.some (backup => service.busy (backup.id))) conflict ('Cancel or finish active runs before changing this source');
+            const nextIds = new Set (input.destinations.map (backup => backup.id));
+            if (elsewhere.some (backup => nextIds.has (backup.id)) || legacyIds ().some (legacy => nextIds.has (legacy))) {
+                conflict ('A destination archive prefix is already in use');
+            }
+            const removed = new Set (existing.filter (backup => !nextIds.has (backup.id)).map (backup => backup.id));
+            draft.backups = [...elsewhere, ...input.destinations];
+            for (const user of draft.users) user.grants = user.grants.filter (grant => !removed.has (grant.backup));
+        }, input.revision);
+        await onChanged (); return res.json ({ revision: result.revision });
+    });
+    router.put ('/sources/:id', updateSource (false));
+    router.delete ('/sources/:id', updateSource (true));
     router.put ('/backups/:id', route (async (req, res) => {
         const id = parameter (req);
         const input = z.strictObject ({ revision, backup: backupSchema }).parse (req.body);
@@ -64,6 +119,7 @@ export function managementRouter (store: ManagementStore, service: BackupService
         if (service.busy (id)) throw Object.assign (Error ('Cancel or finish active runs before editing'), { status: 409 });
         const result = await store.update (draft => {
             const index = draft.backups.findIndex (backup => backup.id === id);
+            if (input.backup.sourceId || draft.backups[index]?.sourceId) conflict ('Use the source endpoint to edit grouped destinations');
             if (index < 0) draft.backups.push (input.backup); else draft.backups[index] = input.backup;
         }, input.revision);
         await onChanged (); return res.json ({ revision: result.revision });
@@ -72,6 +128,7 @@ export function managementRouter (store: ManagementStore, service: BackupService
         const id = parameter (req); const input = deletion.parse (req.body);
         if (service.busy (id)) throw Object.assign (Error ('Cancel or finish active runs before deleting'), { status: 409 });
         const result = await store.update (draft => {
+            if (draft.backups.find (backup => backup.id === id)?.sourceId) conflict ('Use the source endpoint to remove grouped destinations');
             draft.backups = draft.backups.filter (backup => backup.id !== id);
             for (const user of draft.users) user.grants = user.grants.filter (grant => grant.backup !== id);
         }, input.revision);

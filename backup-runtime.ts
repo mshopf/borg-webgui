@@ -6,17 +6,25 @@ import type { ManagementStore } from './management-store';
 import type { BackupDefinition, BackupCredential } from './management-schema';
 import { archiveTimestamp, dueOccurrence, nextOccurrence } from './backup-schedule';
 
+const metric = z.number ().int ().min (0).optional ();
+export const backupStatisticsSchema = z.strictObject ({
+    originalBytes: metric, compressedBytes: metric, deduplicatedBytes: metric, files: metric
+});
+export type BackupStatistics = z.infer<typeof backupStatisticsSchema>;
 export const runSchema = z.strictObject ({
     id: z.string ().uuid (), backupId: z.string (), archive: z.string (),
+    sourceId: z.string ().optional (), sourceName: z.string ().optional (), destinationName: z.string ().optional (),
     action: z.enum (['backup', 'initialize']), origin: z.enum (['manual', 'scheduled']),
     state: z.enum (['queued', 'running', 'done', 'warning', 'error', 'cancelled', 'interrupted']),
     queuedAt: z.string (), startedAt: z.string ().optional (), finishedAt: z.string ().optional (),
-    exitCode: z.number ().int ().optional (), message: z.string (), slot: z.string ().optional ()
+    exitCode: z.number ().int ().optional (), message: z.string (), slot: z.string ().optional (),
+    statistics: backupStatisticsSchema.optional ()
 });
 const runtimeSchema = z.strictObject ({ version: z.literal (1), slots: z.record (z.string (), z.string ()), runs: z.array (runSchema).max (500) });
 export type BackupRun = z.infer<typeof runSchema>;
 type Runtime = z.infer<typeof runtimeSchema>;
-export type BackupExecutor = (backup: BackupDefinition, credential: BackupCredential | undefined, run: BackupRun, signal: AbortSignal) => Promise<number>;
+export type BackupExecutor = (backup: BackupDefinition, credential: BackupCredential | undefined, run: BackupRun, signal: AbortSignal,
+    record: (statistics: BackupStatistics) => void, repositories: readonly string[]) => Promise<number>;
 
 export class BackupService {
     private state: Runtime = { version: 1, slots: {}, runs: [] };
@@ -75,7 +83,9 @@ export class BackupService {
         if (!backup) throw Object.assign (Error ('Unknown backup'), { status: 404 });
         const credential = document.credentials.find (item => item.id === backup.credentialId);
         const controller = new AbortController ();
-        const run: BackupRun = { id: randomUUID (), backupId: id, archive: id + '-' + archiveTimestamp (now), action, origin: slot ? 'scheduled' : 'manual', state: 'queued', queuedAt: now.toISOString (), message: 'Queued', slot };
+        const run: BackupRun = { id: randomUUID (), backupId: id, archive: id + '-' + archiveTimestamp (now),
+            sourceId: backup.sourceId ?? id, sourceName: backup.sourceName ?? backup.name, destinationName: backup.name,
+            action, origin: slot ? 'scheduled' : 'manual', state: 'queued', queuedAt: now.toISOString (), message: 'Queued', slot };
         await this.change (state => {
             if (state.runs.some (item => item.backupId === id && (item.state === 'queued' || item.state === 'running'))) throw Object.assign (Error ('This backup is already queued or running'), { status: 409 });
             if (slot && state.slots[id] === slot) throw Object.assign (Error ('Scheduled time already claimed'), { status: 409 });
@@ -91,28 +101,33 @@ export class BackupService {
         this.controllers.set (run.id, controller);
         this.work = this.work.catch (() => {}).then (async () => {
             let executionSignal: AbortSignal | undefined;
+            const result = { ...run };
             try {
-                if (controller.signal.aborted || this.stopped) { await this.finish (run.id, 'cancelled', 'Cancelled before starting'); return; }
+                if (controller.signal.aborted || this.stopped) { await this.finish (result, 'cancelled', 'Cancelled before starting'); return; }
                 await this.change (state => {
                     const current = state.runs.find (item => item.id === run.id);
                     if (current) { current.state = 'running'; current.startedAt = new Date ().toISOString (); current.message = 'Running'; }
                 });
                 const signal = executionSignal = AbortSignal.any ([controller.signal, AbortSignal.timeout (backup.timeoutMinutes * 60000)]);
-                const code = await this.execute (backup, credential, run, signal);
-                await this.finish (run.id, signal.aborted ? 'cancelled' : code === 0 ? 'done' : code === 1 ? 'warning' : 'error', signal.aborted ? 'Cancelled or timed out' : code < 2 ? 'Backup operation finished' : 'Backup operation failed; see log', code);
+                const code = await this.execute (backup, credential, run, signal, statistics => { result.statistics = statistics; },
+                    document.backups.map (destination => destination.repository));
+                await this.finish (result, signal.aborted ? 'cancelled' : code === 0 ? 'done' : code === 1 ? 'warning' : 'error', signal.aborted ? 'Cancelled or timed out' : code < 2 ? 'Backup operation finished' : 'Backup operation failed; see log', code);
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Backup failed';
-                await this.finish (run.id, executionSignal?.aborted || controller.signal.aborted ? 'cancelled' : 'error', credential?.passphrase ? message.replaceAll (credential.passphrase, '[redacted]') : message, 2);
+                await this.finish (result, executionSignal?.aborted || controller.signal.aborted ? 'cancelled' : 'error', credential?.passphrase ? message.replaceAll (credential.passphrase, '[redacted]') : message, 2);
             } finally { this.controllers.delete (run.id); }
         });
         // Observe persistence failures without allowing an unhandled background rejection.
         void this.work.catch ((error: unknown) => { console.error ('Backup service failure', error); });
         return structuredClone (run);
     }
-    private async finish (id: string, state: BackupRun['state'], message: string, exitCode?: number): Promise<void> {
+    private async finish (run: BackupRun, state: BackupRun['state'], message: string, exitCode?: number): Promise<void> {
         await this.change (document => {
-            const run = document.runs.find (item => item.id === id);
-            if (run) { run.state = state; run.message = message; run.exitCode = exitCode; run.finishedAt = new Date ().toISOString (); }
+            const current = document.runs.find (item => item.id === run.id);
+            if (current) {
+                current.state = state; current.message = message; current.exitCode = exitCode;
+                current.finishedAt = new Date ().toISOString (); current.statistics = run.statistics;
+            }
         });
     }
     async cancel (id: string): Promise<void> {

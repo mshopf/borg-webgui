@@ -1,18 +1,143 @@
-<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1"><title>Backup administration · Borg</title><link rel=stylesheet href=admin.css><link rel=icon href=favicon-32x32.png></head>
-<body data-page=backups><nav><a href=/>Restore &amp; activity</a><strong>Backup administration</strong><a href=admin-access.html>Credentials &amp; access</a></nav>
-<h1>Backup administration</h1><p class=intro>Schedule local backups or pull from a remote host over SSH. New definitions start disabled until you enable them.</p><div id=notice role=status aria-live=polite></div>
-<main id=admin-content hidden><div class=layout><section><div class=card><div class=actions><h2>Backup configurations</h2><button id=new-backup type=button>Add backup</button><button id=refresh type=button>Refresh</button></div><div id=backup-list></div></div><div class=card><h2>Recent runs</h2><div id=run-list></div></div></section>
-<section class=card><h2 id=editor-title>Add backup</h2><form id=backup-form>
-<div class=row><label>Archive prefix / ID<input name=id required maxlength=64 pattern="[a-zA-Z0-9][a-zA-Z0-9._%\-]{0,63}" placeholder=hostname-root><small>Permanent prefix used for archive names, access grants and the restore tree.</small></label><label>Display name<input name=name required maxlength=120></label></div>
-<label class=check><input type=checkbox name=enabled>Enable scheduled backups</label>
-<div class=row><label>Mode<select name=mode><option value=local>Local / active</option><option value=pull>Remote / SSH pull</option></select></label><label>Repository credential<select name=credentialId><option value="">Use service account environment</option></select></label></div>
-<label>Repository<input name=repository required placeholder="/srv/backup/borg or ssh://backup/./borg"><small>Pull mode requires an absolute repository path on this server. Existing repositories are used as-is.</small></label>
-<label>Source paths<textarea name=sources required placeholder="/&#10;/home"></textarea><small>One absolute path per line, on the source host. Permission to read these paths comes from the service account or remote SSH user.</small></label>
-<fieldset id=remote-fields hidden><legend>Remote source</legend><div class=row><label>Host<input name=host placeholder=client.example.org></label><label>SSH user<input name=user value=root></label><label>Port<input type=number name=port min=1 max=65535 value=22></label></div><small>The remote host needs Borg 1.x and socat, SSH key authentication, and Unix socket forwarding. No backupall.sh installation is needed.</small></fieldset>
-<fieldset><legend>Schedule</legend><div class=row><label>Frequency<select name=frequency><option value=daily>Daily</option><option value=weekly>Selected weekdays</option><option value=monthly>Selected month days</option></select></label><label>Exact times<input name=times required value=03:00 placeholder="03:00, 15:30"><small>24-hour times, separated by commas.</small></label></div><label>Timezone<input name=timezone required list=timezones><datalist id=timezones></datalist></label>
-<div id=weekdays hidden class=row></div><label id=monthdays-label hidden>Days of month<input name=monthdays value=1 placeholder="1, 15, 31"></label><small>Missing daylight-saving times and nonexistent month days are skipped; repeated wall-clock times run once. Missed schedules during server downtime are skipped.</small></fieldset>
-<fieldset><legend>Exclusions</legend><div id=templates class=templates></div><label>Additional exclusion patterns<textarea name=exclusions placeholder="/data/backup&#10;*/.custom-cache"></textarea></label><button type=button id=preview-exclusions>Preview combined exclusions</button><label id=exclusion-preview-label hidden>Effective patterns<textarea id=exclusion-preview readonly></textarea></label><small>Templates are starting points. Review exclusions before enabling a backup; files excluded here cannot be restored.</small></fieldset>
-<fieldset><legend>Retention</legend><label class=check><input type=checkbox name=retentionEnabled checked>Prune this archive prefix after a successful or warning-level backup</label><div class=row><label>Daily<input name=daily type=number min=0 max=10000 value=14 required></label><label>Weekly<input name=weekly type=number min=0 max=10000 value=8 required></label><label>Monthly<input name=monthly type=number min=0 max=10000 value=24 required></label><label>Yearly<input name=yearly type=number min=0 max=10000 value=10 required></label></div><label class=check><input type=checkbox name=compact>Compact the repository after pruning to reclaim space</label></fieldset>
-<fieldset><legend>Backup options</legend><div class=row><label>Compression<select name=compression><option>lz4</option><option>zstd,3</option><option>zstd,6</option><option>none</option></select></label><label>Timeout (minutes)<input name=timeoutMinutes type=number min=1 max=10080 value=720 required></label></div><label class=check><input type=checkbox name=oneFileSystem checked>Stay on one filesystem for each source path</label><label class=check><input type=checkbox name=excludeCaches checked>Honor CACHEDIR.TAG cache exclusions</label><label class=check><input type=checkbox name=index checked>Refresh the restore tree after backup</label><label>Restore directory<input name=restoreDirectory value=./restore required></label></fieldset>
-<div class=actions><button class=primary type=submit>Save backup</button><button type=button id=cancel-edit>Reset form</button><button class=danger type=button id=delete-backup hidden>Remove definition</button></div><small>Removing a definition keeps repository archives, logs and restored files. Repository initialization is a separate action in the configuration list.</small>
-</form></section></div></main><script src=admin.js></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Backup management · Borg</title>
+    <link rel="stylesheet" href="admin.css">
+    <link rel="stylesheet" href="backup-console.css">
+    <link rel="icon" href="favicon-32x32.png">
+</head>
+<body data-page="backups">
+    <aside class="console-nav">
+        <a href="/" class="brand"><img src="borg.png" alt=""><span>Borg Backup</span></a>
+        <nav aria-label="Backup navigation">
+            <button type="button" data-view="sources" aria-current="page">Sources &amp; destinations</button>
+            <button type="button" data-view="history">Run history</button>
+            <a href="/">Restore &amp; activity</a>
+            <a href="admin-access.html">Credentials &amp; access</a>
+        </nav>
+    </aside>
+    <div class="console-workspace">
+        <header class="console-heading">
+            <div>
+                <h1 id="view-title">Backup management</h1>
+                <p id="view-description">Configure what gets backed up, where it goes, and when it runs.</p>
+            </div>
+            <button type="button" class="primary" id="new-backup">+ Add source</button>
+        </header>
+        <div id="notice" role="status" aria-live="polite"></div>
+        <main id="admin-content" hidden>
+            <section class="metrics" id="overview-metrics" aria-label="Backup overview"></section>
+            <div id="sources-view" class="console-layout">
+                <section class="panel source-panel" aria-labelledby="sources-title">
+                    <header class="panel-heading"><h2 id="sources-title">Sources</h2><button id="refresh" type="button" class="quiet">Refresh</button></header>
+                    <div id="backup-list"></div>
+                </section>
+                <section class="panel editor-panel" aria-labelledby="editor-title">
+                    <header class="panel-heading">
+                        <h2 id="editor-title">Add source</h2><button type="button" id="cancel-edit" class="quiet">Reset draft</button>
+                    </header>
+                    <form id="backup-form">
+                        <fieldset class="settings-section">
+                            <legend>Source settings</legend>
+                            <div class="row">
+                                <label>Source name<input name="sourceName" required maxlength="120" placeholder="Server files"></label>
+                                <label>Source mode<select name="mode"><option value="local">Local filesystem</option><option value="pull">Remote SSH pull</option></select></label>
+                            </div>
+                            <label>Source paths<textarea name="sources" required placeholder="/srv/projects&#10;/home"></textarea><small>One absolute path per line.</small></label>
+                            <div id="remote-fields" hidden>
+                                <div class="row remote-fields">
+                                    <label>SSH host<input name="host" placeholder="client.example.org"></label>
+                                    <label>SSH user<input name="user" value="root"></label>
+                                    <label>SSH port<input type="number" name="port" min="1" max="65535" value="22"></label>
+                                </div>
+                                <small>The remote host needs Borg 1.x, socat, SSH key access, and Unix socket forwarding.</small>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend>Destinations</legend>
+                            <div class="destination-toolbar">
+                                <div id="destination-tabs" class="actions" role="group" aria-label="Select destination"></div>
+                                <button type="button" id="add-destination" class="quiet">+ Add destination</button>
+                            </div>
+                            <div class="row">
+                                <label>Destination name<input name="name" required maxlength="120" placeholder="Local repository"></label>
+                                <label>Archive prefix<input name="id" required maxlength="64" pattern="[a-zA-Z0-9][a-zA-Z0-9._%\-]{0,63}" placeholder="server-local"></label>
+                            </div>
+                            <label>Repository<input name="repository" required placeholder="/srv/backup/borg or ssh://backup/./borg"><small>Use an absolute server path for SSH pull. Existing repositories are used as-is.</small></label>
+                            <label>Repository credentials<select name="credentialId"><option value="">Use service account environment</option></select></label>
+                            <div id="destination-actions" class="actions"></div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend>Schedule</legend>
+                            <label class="check"><input type="checkbox" name="enabled">Enable scheduled runs for this destination</label>
+                            <div class="row">
+                                <label>Frequency<select name="frequency"><option value="daily">Daily</option><option value="weekly">Selected weekdays</option><option value="monthly">Selected month days</option></select></label>
+                                <label>Run times<input name="times" required value="03:00" placeholder="03:00, 15:30"><small>24-hour times, separated by commas.</small></label>
+                            </div>
+                            <label>Timezone<input name="timezone" required list="timezones"><datalist id="timezones"></datalist></label>
+                            <div id="weekdays" hidden class="row"></div>
+                            <label id="monthdays-label" hidden>Days of month<input name="monthdays" value="1" placeholder="1, 15, 31"></label>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend>Exclusions</legend>
+                            <div id="templates" class="templates"></div>
+                            <label>Additional Borg exclusion patterns<textarea name="exclusions" placeholder="/data/backup&#10;*/.custom-cache"></textarea></label>
+                            <button type="button" id="preview-exclusions">Preview combined exclusions</button>
+                            <label id="exclusion-preview-label" hidden>Effective patterns<textarea id="exclusion-preview" readonly></textarea></label>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend>Retention</legend>
+                            <label class="check"><input type="checkbox" name="retentionEnabled" checked>Prune older archives for this prefix after backup</label>
+                            <div class="row">
+                                <label>Daily<input name="daily" type="number" min="0" max="10000" value="14" required></label>
+                                <label>Weekly<input name="weekly" type="number" min="0" max="10000" value="8" required></label>
+                                <label>Monthly<input name="monthly" type="number" min="0" max="10000" value="24" required></label>
+                                <label>Yearly<input name="yearly" type="number" min="0" max="10000" value="10" required></label>
+                            </div>
+                            <label class="check"><input type="checkbox" name="compact">Compact the repository after pruning</label>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend>Backup options</legend>
+                            <div class="row">
+                                <label>Compression<select name="compression"><option>lz4</option><option>zstd,3</option><option>zstd,6</option><option>none</option></select></label>
+                                <label>Timeout (minutes)<input name="timeoutMinutes" type="number" min="1" max="10080" value="720" required></label>
+                            </div>
+                            <label class="check"><input type="checkbox" name="oneFileSystem" checked>Stay on one filesystem per source path</label>
+                            <label class="check"><input type="checkbox" name="excludeCaches" checked>Honor CACHEDIR.TAG cache exclusions</label>
+                            <label class="check"><input type="checkbox" name="index" checked>Refresh the restore tree after backup</label>
+                            <label>Restore directory<input name="restoreDirectory" value="./restore" required></label>
+                        </fieldset>
+                        <div class="editor-footer actions">
+                            <button class="primary" type="submit">Save source</button>
+                            <button type="button" id="delete-backup" class="danger" hidden>Remove source</button>
+                        </div>
+                    </form>
+                </section>
+            </div>
+            <div id="history-view" hidden>
+                <section class="panel history-panel" aria-labelledby="history-title">
+                    <header class="panel-heading">
+                        <h2 id="history-title">Backup runs</h2>
+                        <label class="filter">Destination<select id="history-filter"><option value="">All destinations</option></select></label>
+                    </header>
+                    <div class="history-metrics" id="history-metrics" aria-label="Run statistics"></div>
+                    <div id="run-list" class="table-scroll"></div>
+                    <div class="history-pagination" id="history-pagination" hidden>
+                        <button id="newer-runs" type="button">Newer</button><span id="run-page"></span><button id="older-runs" type="button">Older</button>
+                    </div>
+                </section>
+                <section id="run-output" class="panel output-panel" aria-labelledby="output-title" hidden>
+                    <header class="panel-heading">
+                        <div><h2 id="output-title">Run output</h2><p id="output-status"></p></div>
+                        <div class="actions"><a id="download-log" download hidden>Download log</a><button id="close-output" type="button">Close</button></div>
+                    </header>
+                    <pre id="log-text" tabindex="0" aria-label="Backup log"></pre>
+                </section>
+            </div>
+        </main>
+    </div>
+    <script src="admin.js"></script>
+</body>
+</html>

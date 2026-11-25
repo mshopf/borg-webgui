@@ -11,13 +11,17 @@ export const exclusionTemplates = [
     { id: 'development', name: 'Rebuildable development dependencies', description: 'Optional: excludes installed dependencies and compiler caches. Source, lockfiles, databases and virtual machines are retained.', patterns: ['*/node_modules', '*/.venv', '*/venv', '*/.gradle/caches', '*/.cargo/registry', '*/.m2/repository', '*/__pycache__'] },
     { id: 'webgui', name: 'Backup outputs and restore staging', description: 'Exclude this service’s logs, tree indexes and restore directories; local repository paths are also excluded automatically.', patterns: [] }
 ] as const;
-export function effectiveExclusions (backup: BackupDefinition): string[] {
+export function effectiveExclusions (backup: BackupDefinition, repositories: readonly string[] = []): string[] {
     const patterns = [...backup.exclusions];
     for (const id of backup.templates) {
         const template = exclusionTemplates.find (item => item.id === id);
         if (template) patterns.push (...template.patterns);
         if (id === 'webgui') patterns.push (...[path.resolve ('log'), path.resolve ('data/managed'), path.resolve (backup.restoreDirectory)].map (directory => 'pp:' + directory));
     }
-    if (backup.mode === 'local' && path.isAbsolute (backup.repository)) patterns.push ('pp:' + backup.repository);
+    if (backup.mode === 'local') {
+        for (const repository of [backup.repository, ...repositories]) {
+            if (path.isAbsolute (repository)) patterns.push ('pp:' + path.resolve (repository));
+        }
+    }
     return [...new Set (patterns)];
 }

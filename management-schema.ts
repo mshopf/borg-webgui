@@ -18,6 +18,8 @@ export const scheduleSchema = z.strictObject ({
 const common = {
     id: idSchema,
     name: line.max (120),
+    sourceId: idSchema.optional (),
+    sourceName: line.max (120).optional (),
     enabled: z.boolean ().default (false),
     repository: line.refine (value => !value.startsWith ('-') && !value.includes ('::'), 'Invalid repository').transform (normalizeRepository),
     sources: z.array (absolutePath).min (1).max (100),
@@ -42,7 +44,7 @@ const common = {
 };
 export const backupSchema = z.discriminatedUnion ('mode', [
     z.strictObject ({ ...common, mode: z.literal ('local') }),
-    z.strictObject ({ ...common, mode: z.literal ('pull'), repository: absolutePath,
+    z.strictObject ({ ...common, mode: z.literal ('pull'), repository: absolutePath.transform (normalizeRepository),
         remote: z.strictObject ({
             host: z.string ().min (1).max (255).regex (/^[a-zA-Z0-9][a-zA-Z0-9.:-]*$/),
             user: z.string ().min (1).max (64).regex (/^[a-zA-Z_][a-zA-Z0-9_-]*$/),
@@ -72,13 +74,27 @@ export const managementSchema = z.strictObject ({
         const ids = value[key].map (item => item.id);
         if (new Set (ids).size !== ids.length) ctx.addIssue ({ code: 'custom', message: 'Duplicate ' + key + ' ID' });
     }
+    const groups = new Map<string, { source: BackupDefinition; repositories: Set<string> }> ();
     for (const backup of value.backups) {
         if (backup.credentialId && !value.credentials.some (item => item.id === backup.credentialId)) ctx.addIssue ({ code: 'custom', message: 'Unknown credential: ' + backup.credentialId });
         // Prevent one job's prune glob from matching another managed job's archives.
         if (value.backups.some (other => other.id !== backup.id && other.id.startsWith (backup.id + '-'))) ctx.addIssue ({ code: 'custom', message: 'Archive prefixes must not overlap: ' + backup.id });
+        const sourceId = backup.sourceId ?? backup.id;
+        const group = groups.get (sourceId);
+        if ((backup.sourceId === undefined) !== (backup.sourceName === undefined) ||
+            (group && (!group.source.sourceId || !backup.sourceId || sourceSignature (group.source) !== sourceSignature (backup)))) {
+            ctx.addIssue ({ code: 'custom', message: 'Destinations must share the same source configuration: ' + sourceId });
+        }
+        if (group) {
+            if (group.repositories.has (backup.repository)) ctx.addIssue ({ code: 'custom', message: 'Duplicate destination repository for ' + sourceId });
+            group.repositories.add (backup.repository);
+        } else groups.set (sourceId, { source: backup, repositories: new Set ([backup.repository]) });
     }
 });
 export type BackupDefinition = z.infer<typeof backupSchema>;
+function sourceSignature (backup: BackupDefinition): string {
+    return JSON.stringify ([backup.sourceName, backup.mode, backup.sources, backup.mode === 'pull' ? backup.remote : null]);
+}
 export type BackupSchedule = z.infer<typeof scheduleSchema>;
 export type BackupCredential = z.infer<typeof credentialSchema>;
 export type ManagedUser = z.infer<typeof userSchema>;

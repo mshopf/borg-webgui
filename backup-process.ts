@@ -70,7 +70,7 @@ export function terminate (child: ChildProcess, signal: NodeJS.Signals = 'SIGTER
         else if (child.exitCode === null && child.signalCode === null) child.kill (signal);
     } catch (error) { if (!(error instanceof Error) || !('code' in error) || error.code !== 'ESRCH') throw error; }
 }
-export async function command (bin: string, args: string[], output: Writable, options: { env?: NodeJS.ProcessEnv; signal: AbortSignal; input?: string } ): Promise<number> {
+export async function command (bin: string, args: string[], output: Writable, options: { env?: NodeJS.ProcessEnv; signal: AbortSignal; input?: string; onStdout?: (chunk: Buffer) => void } ): Promise<number> {
     options.signal.throwIfAborted ();
     if (output.destroyed) throw output.errored ?? Error ('Backup log is closed');
     const child = spawn (bin, args, { env: options.env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
@@ -89,6 +89,7 @@ export async function command (bin: string, args: string[], output: Writable, op
         child.once ('error', reject);
         child.once ('close', (code, signal) => { resolve (signal ? 2 : code ?? 2); });
     });
+    if (options.onStdout) child.stdout.on ('data', options.onStdout);
     child.stdout.pipe (output, { end: false }); child.stderr.pipe (output, { end: false });
     // EPIPE means the remote command exited before consuming its script.
     child.stdin.on ('error', error => { if (!('code' in error) || error.code !== 'EPIPE') terminate (child); });

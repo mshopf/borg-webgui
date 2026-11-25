@@ -55,7 +55,10 @@ test ('command plans quote shell input and scope pruning without shell execution
     const value = backup ({ exclusions: ["*/it's cache"] });
     const args = createArguments (value, 'source-2026-10-30-030000');
     assert.ok (args.includes ("*/it's cache")); assert.equal (args.at (-1), '/source path');
-    const prune = pruneArguments (value); assert.equal (prune[prune.indexOf ('--glob-archives') + 1], 'source-*');
+    const prune = pruneArguments (value);
+    const archiveMatch = new RegExp ('^' + prune[prune.indexOf ('--glob-archives') + 1] + '$');
+    assert.match ('source-2026-10-30-030000', archiveMatch);
+    assert.doesNotMatch ('source-other-2026-10-30-030000', archiveMatch);
     const remote = backup ({ mode: 'pull', remote: { host: 'client', user: 'root' }, sources: ["/path with 'quotes' $(touch /bad)"] });
     const invocation = pullInvocation (remote, { id: 'key', name: 'Key', passphrase: "safe 'secret'" }, run (), '/tmp/socket');
     assert.ok (invocation.input.includes ("'\\''"));

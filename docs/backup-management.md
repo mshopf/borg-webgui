@@ -59,15 +59,20 @@ send credentials.
 
 ## Backup administration
 
-Open **Manage backups** from the main page (`/admin-backups.html`). Add a stable ID
-such as `host-root`, repository, one or more absolute source paths, and a timezone.
-The ID is also the archive prefix and restore-tree name. IDs cannot be renamed;
-create a new definition if the prefix must change. Managed prefixes cannot
-contain glob characters or overlap another managed prefix. Use distinct prefixes
-for other writers sharing a repository as well.
+Open **Manage backups** from the main page (`/admin-backups.html`). Add a source
+with one or more absolute paths and choose local filesystem or SSH pull. Use
+**Add destination** to attach another repository to that source. Each
+destination has its own archive prefix, credentials, schedule, exclusions,
+retention, compression and restore-index settings. **Save source** saves
+the shared settings and all destinations together.
 
-Definitions start with scheduling disabled. Use **Run now** to test a definition
-before enabling it. Repository initialization is a separate action and requires
+The archive prefix identifies the destination's restore tree and access grants.
+Create a new destination to change the prefix. Use distinct prefixes for other
+writers sharing a repository. Existing definitions appear as sources with one
+destination and retain their archive prefixes on save.
+
+New destinations start with scheduling disabled. **Run now** queues the selected
+destination using its saved configuration. Repository initialization is a separate action and requires
 a stored passphrase; new repositories use `repokey-blake2` encryption. Existing
 repositories, including ones with another encryption mode, are used without
 reinitialization. Repository keys must be exported and kept separately according
@@ -79,8 +84,9 @@ The local/active workflow replaces `borg.sh`:
 2. Use lz4 by default, no atime/BSD-flag recording, numeric ownership, one filesystem
    per source, and cache-tag exclusions. Compression and filesystem/cache options
    are editable. Source paths are passed as arguments, not interpolated shell code.
-3. For exit codes 0 or 1, prune only `ID-*`, defaulting to 14 daily, 8 weekly, 24
-   monthly and 10 yearly archives. A failed create skips pruning and indexing.
+3. For exit codes 0 or 1, prune only archives named
+   `ID-YYYY-MM-DD-hhmmss`. The defaults keep 14 daily, 8 weekly, 24 monthly and
+   10 yearly archives. A failed create skips pruning and indexing.
 4. Optionally compact on the server to reclaim repository space. Compaction starts
    disabled, as it was absent from the supplied scripts.
 5. Refresh the binary restore tree through `tree.js -c -a`; newly indexed backups
@@ -92,13 +98,17 @@ there. A local mode repository may be an absolute/relative path or a Borg SSH
 repository address. A repository's SSH host key must already be trusted by the
 service account. Repository initialization is never automatic during a backup.
 
-Detailed output and Borg statistics are kept in the web-readable run log instead
-of the scripts' bzip2/Perl master-log pipeline. The run journal supplies structured
-status, queue/start/finish times and exit codes. Exit code 1 is shown as a warning;
-failures do not block subsequent queued backups. Backup runs are serialized and
-Borg commands also use `--lock-wait 60` to coordinate with restores or external
-Borg clients. Completed logs are retained even after their run records age out;
-use an external retention policy for old log files.
+In **Run history**, filter by destination or open a run to watch its output.
+The viewer updates every three seconds while visible and shows the last 64 KiB.
+Use **Download log** to read the complete file. History includes run status,
+timing, archive size, compressed and deduplicated bytes, and file count when
+Borg reports them. Summary statistics cover the retained runs matching the
+current filter. The UI shows the most recent 500 run records and their logs.
+Older log files remain on disk for archival or retention.
+
+Exit code 1 appears as a warning. A failed run leaves other queued destinations
+eligible to run. The server executes one destination at a time and uses
+`--lock-wait 60` to coordinate with restores or external Borg clients.
 
 ## Remote/pull mode
 
@@ -138,7 +148,7 @@ and [repository-server restrictions](https://borgbackup.readthedocs.io/en/stable
 
 ## Scheduling and restart behavior
 
-Each definition contains a frequency (`daily`, selected weekdays, or selected
+Each destination contains a frequency (`daily`, selected weekdays, or selected
 month days), one or more exact 24-hour `HH:MM` times, and an IANA timezone. The
 initial time is `03:00` in the server's timezone. The UI displays the next run in
 the viewer's local timezone. Weekly day numbers are Monday=1 through Sunday=7.
@@ -166,9 +176,9 @@ ID with a different repository likewise cannot expose its former index. Relative
 filesystem repositories are anchored to the server working directory, including
 during extraction.
 
-Removing a definition never deletes repository archives, restored data or its
-existing index file. It removes the managed restore listing and its specific
-user grants. Removing a credential in use is rejected. The final enabled
+Removing a source or destination retains repository archives, restored data,
+existing indexes and run logs. It removes the affected managed restore listings
+and their specific user grants. Removing a credential in use is rejected. The final enabled
 administrator cannot be removed or disabled.
 
 ## Users, credentials and exclusion helpers
@@ -201,17 +211,18 @@ application caches, trash/recycle bins, optional development dependencies, and t
 service's own backup/restore outputs. The original supplied base and replacement
 exclude lists are also available as optional templates, including their
 site-specific paths. **Preview combined exclusions** shows the final patterns.
-Automatic output/repository exclusions use literal Borg path prefixes; user
-patterns retain their normal matching semantics. A local repository path is
-always excluded from a local source backup to prevent
-backing a repository up into itself. Templates are not exhaustive: databases,
+Automatic output and repository exclusions use literal Borg path prefixes. User
+patterns retain their normal matching semantics. Local source runs automatically
+exclude configured local repository paths, including sibling destinations under
+the source directory. Databases,
 virtual machines and application state may need their own quiescing/snapshot
 workflow. Development dependencies are not excluded by default.
 
 ## Validation
 
 `npm run check` runs native TypeScript 7 checking, typed ESLint, and regression
-tests. Tests use temporary directories, fake Borg/SSH executables, a real local
-socket relay, HTTP permission checks and DOM admin forms. They do not access or
-modify a production repository. Real deployments still need an end-to-end trial
-with their installed Borg/OpenSSH versions and source-host permissions.
+tests. Tests use temporary directories, simulated Borg and SSH commands, a local
+socket relay, HTTP permission checks and DOM admin forms. With Borg 1 installed,
+the suite also creates temporary repositories and verifies that manual and
+scheduled destinations produce separate archives, apply exclusions, and retain
+statistics across a restart. CI installs Borg for this test.
